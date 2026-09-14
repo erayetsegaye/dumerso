@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Settings {
+  id           String   @id @default("default")
+  cafeName     String   @default("Dumerso Coffee")
+  logoUrl      String   @default("/logo.jpg")
+  description  String   @default("Freshly brewed. Made with care.")
+  tagline      String   @default("Scan. Browse. Enjoy.")
+  phone        String   @default("+251 913 961 921")
+  location     String   @default("Gombora Taxi Mazoriya")
+  mapsUrl      String   @default("")
+  openingHours String   @default("Mon - Sun: 7:00 AM - 10:00 PM")
+  facebook     String   @default("")
+  instagram    String   @default("")
+  telegram     String   @default("")
+  tiktok       String   @default("")
+  updatedAt    DateTime @updatedAt
+}
+
+model Category {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  icon      String     @default("☕")
+  order     Int        @default(0)
+  items     MenuItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model MenuItem {
+  id          String   @id @default(uuid())
+  name        String
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  price       Float
+  description String?
+  imageUrl    String?
+  isAvailable Boolean  @default(true)
+  isSpecial   Boolean  @default(false)
+  isPopular   Boolean  @default(false)
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AdminUser {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  action    String
+  details   String
+  type      String   @default("update")
+  createdAt DateTime @default(now())
+}
+
+model Order {
+  id            String      @id @default(uuid())
+  orderNumber   String      @unique
+  orderDate     String      // Format: YYYY-MM-DD
+  orderTime     String      // Format: hh:mm AM/PM
+  totalAmount   Float
+  paymentMethod String      @default("Cash") // Cash, Telebirr, Card, Other
+  status        String      @default("Completed") // Completed, Voided
+  isClosed      Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  items         OrderItem[]
+}
+
+model OrderItem {
+  id           String   @id @default(uuid())
+  orderId      String
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId   String?
+  itemName     String
+  categoryName String   @default("General")
+  quantity     Int
+  unitPrice    Float
+  subtotal     Float
+}
+
+model DailySalesSummary {
+  id            String   @id @default(uuid())
+  date          String   @unique // Format: YYYY-MM-DD
+  totalSales    Float
+  totalOrders   Int
+  itemsSold     Int
+  averageOrder  Float
+  cashSales     Float    @default(0)
+  telebirrSales Float    @default(0)
+  cardSales     Float    @default(0)
+  otherSales    Float    @default(0)
+  isClosed      Boolean  @default(true)
+  closedAt      DateTime @default(now())
+}
+
+model Cost {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  costType    String   // "fixed_monthly" | "sales_percentage"
+  amount      Float?   // Monthly ETB amount if fixed_monthly
+  percentage  Float?   // Percentage (0-100) if sales_percentage
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
