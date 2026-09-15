@@ -72,6 +72,189 @@ interface ReportData {
   isTodayClosed: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Excel export helpers
+// ---------------------------------------------------------------------------
+
+type ExportPeriodType = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly' | 'custom';
+
+const EXPORT_PERIOD_OPTIONS: { id: ExportPeriodType; label: string }[] = [
+  { id: 'daily', label: 'Daily' },
+  { id: 'weekly', label: 'Weekly' },
+  { id: 'monthly', label: 'Monthly' },
+  { id: 'quarterly', label: 'Quarterly' },
+  { id: 'yearly', label: 'Yearly' },
+  { id: 'custom', label: 'Custom Range' },
+];
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+const QUARTER_OPTIONS = [
+  { id: '1', label: 'Q1 (January - March)' },
+  { id: '2', label: 'Q2 (April - June)' },
+  { id: '3', label: 'Q3 (July - September)' },
+  { id: '4', label: 'Q4 (October - December)' },
+];
+
+/** Excel number formats applied to numeric cells so amounts stay editable numbers, not text. */
+const EXCEL_NUMBER_FORMATS: Record<string, string> = {
+  currency: '#,##0.00 "ETB"',
+  percent: '0.00%',
+  integer: '#,##0',
+  decimal: '#,##0.00',
+};
+
+const EXPORT_INPUT_CLASS =
+  'bg-[#1A0D07] border border-[#4A2917] text-[#F3E4CB] text-xs px-3 py-2 rounded-lg focus:outline-none focus:border-[#8B5A2B] min-w-[150px]';
+
+/** Sheet layout metadata returned by /api/export (see WORKBOOK_SPEC there). */
+interface ExportSheetSpec {
+  key: string;
+  title: string;
+  formats?: Record<string, string>;
+  keyValue?: boolean;
+  autofilter?: boolean;
+  totalLabel?: string;
+  sumColumns?: string[];
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function toLocalDateStr(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function parseLocalDate(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [y, m, d] = value.split('-').map(Number);
+  const dateObj = new Date(y, m - 1, d);
+  return toLocalDateStr(dateObj) === value ? dateObj : null;
+}
+
+function formatLongDate(value: string): string {
+  const d = parseLocalDate(value);
+  if (!d) return value;
+  return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** Monday..Sunday of the week that contains `value`. */
+function weekBounds(value: string): { monday: string; sunday: string } | null {
+  const d = parseLocalDate(value);
+  if (!d) return null;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { monday: toLocalDateStr(monday), sunday: toLocalDateStr(sunday) };
+}
+
+function describeExportPeriod(
+  type: ExportPeriodType,
+  values: { date: string; monthNum: string; quarter: string; year: string; start: string; end: string }
+): string {
+  switch (type) {
+    case 'daily':
+      return values.date ? formatLongDate(values.date) : 'Choose a day';
+    case 'weekly': {
+      const bounds = values.date ? weekBounds(values.date) : null;
+      return bounds
+        ? `Monday ${formatLongDate(bounds.monday)} to Sunday ${formatLongDate(bounds.sunday)}`
+        : 'Choose any day in the week you want';
+    }
+    case 'monthly':
+      return `${MONTH_NAMES[Number(values.monthNum) - 1] || ''} ${values.year}`.trim();
+    case 'quarterly': {
+      const first = (Number(values.quarter) - 1) * 3;
+      return `Q${values.quarter} ${values.year} (${MONTH_NAMES[first] || ''} to ${MONTH_NAMES[first + 2] || ''})`;
+    }
+    case 'yearly':
+      return `1 January to 31 December ${values.year}`;
+    case 'custom':
+      return values.start && values.end
+        ? `${formatLongDate(values.start)} to ${formatLongDate(values.end)}`
+        : 'Choose a start date and an end date';
+    default:
+      return '';
+  }
+}
+
+/**
+ * Adds one worksheet to the workbook: auto column widths, Excel number formats on
+ * numeric cells, live SUM formulas on the total row and filter arrows on flat tables.
+ */
+function addWorksheet(wb: XLSX.WorkBook, rows: any[], spec: ExportSheetSpec) {
+  const title = spec.title.slice(0, 31);
+
+  if (!rows || rows.length === 0) {
+    const emptyWs = XLSX.utils.aoa_to_sheet([['No data available for this section']]);
+    XLSX.utils.book_append_sheet(wb, emptyWs, title);
+    return;
+  }
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const headers = Object.keys(rows[0]);
+  const lastRowIndex = rows.length; // sheet row index of the last data row (row 0 is the header)
+
+  // Column widths
+  ws['!cols'] = headers.map((header) => {
+    let maxLen = header.length;
+    for (const row of rows) {
+      const val = row[header];
+      if (val === null || val === undefined) continue;
+      const len = typeof val === 'number' ? val.toFixed(2).length + 6 : String(val).length;
+      if (len > maxLen) maxLen = len;
+    }
+    return { wch: Math.min(Math.max(maxLen + 2, 10), 60) };
+  });
+
+  // Number formats
+  headers.forEach((header, c) => {
+    const columnFormat = spec.formats?.[header];
+    for (let r = 1; r <= lastRowIndex; r++) {
+      const cell = ws[XLSX.utils.encode_cell({ c, r })];
+      if (!cell || cell.t !== 'n') continue;
+      let formatKey = columnFormat;
+      if (spec.keyValue) {
+        const unit = rows[r - 1]?.Unit;
+        formatKey = unit === 'ETB' ? 'currency' : unit === '%' ? 'percent' : Number.isInteger(cell.v) ? 'integer' : 'decimal';
+      }
+      if (formatKey && EXCEL_NUMBER_FORMATS[formatKey]) cell.z = EXCEL_NUMBER_FORMATS[formatKey];
+    }
+  });
+
+  // Live SUM formulas on the total row, so edits above update the total in Excel
+  if (spec.totalLabel && spec.sumColumns && spec.sumColumns.length > 0) {
+    const totalIndex = rows.findIndex((row) => row[headers[0]] === spec.totalLabel);
+    if (totalIndex > 0) {
+      const totalExcelRow = totalIndex + 2; // +1 header row, +1 because Excel rows are 1-based
+      for (const columnName of spec.sumColumns) {
+        const c = headers.indexOf(columnName);
+        if (c < 0) continue;
+        const col = XLSX.utils.encode_col(c);
+        const addr = XLSX.utils.encode_cell({ c, r: totalIndex + 1 });
+        const existing = ws[addr];
+        ws[addr] = {
+          t: 'n',
+          v: existing && typeof existing.v === 'number' ? existing.v : 0,
+          f: `SUM(${col}2:${col}${totalExcelRow - 1})`,
+          z: EXCEL_NUMBER_FORMATS[spec.formats?.[columnName] || 'decimal'],
+        };
+      }
+    }
+  }
+
+  if (spec.autofilter) {
+    ws['!autofilter'] = { ref: `A1:${XLSX.utils.encode_col(headers.length - 1)}${lastRowIndex + 1}` };
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, title);
+}
+
 export default function SalesReportsPage() {
   const [period, setPeriod] = useState<string>('today');
   const [startDate, setStartDate] = useState<string>('');
@@ -85,6 +268,68 @@ export default function SalesReportsPage() {
   // Excel Export State
   const [isExporting, setIsExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [exportPeriodType, setExportPeriodType] = useState<ExportPeriodType>('daily');
+  const [todayStr, setTodayStr] = useState<string>('');
+  const [exportDate, setExportDate] = useState<string>('');
+  const [exportMonthNum, setExportMonthNum] = useState<string>('');
+  const [exportQuarter, setExportQuarter] = useState<string>('');
+  const [exportYear, setExportYear] = useState<string>('');
+  const [exportStartDate, setExportStartDate] = useState<string>('');
+  const [exportEndDate, setExportEndDate] = useState<string>('');
+
+  // Default the export pickers to the current day / month / quarter / year (set on the client to avoid hydration mismatches)
+  useEffect(() => {
+    const now = new Date();
+    const today = toLocalDateStr(now);
+    setTodayStr(today);
+    setExportDate(today);
+    setExportMonthNum(pad2(now.getMonth() + 1));
+    setExportQuarter(String(Math.floor(now.getMonth() / 3) + 1));
+    setExportYear(String(now.getFullYear()));
+  }, []);
+
+  const currentYear = todayStr ? Number(todayStr.slice(0, 4)) : new Date().getFullYear();
+  const yearOptions = Array.from({ length: 6 }, (_, i) => String(currentYear - i));
+
+  const buildExportQuery = (): string | null => {
+    const params = new URLSearchParams({ period: exportPeriodType });
+    switch (exportPeriodType) {
+      case 'daily':
+      case 'weekly':
+        if (!exportDate) return null;
+        params.set('date', exportDate);
+        break;
+      case 'monthly':
+        if (!exportYear || !exportMonthNum) return null;
+        params.set('month', `${exportYear}-${exportMonthNum}`);
+        break;
+      case 'quarterly':
+        if (!exportYear || !exportQuarter) return null;
+        params.set('quarter', `${exportYear}-Q${exportQuarter}`);
+        break;
+      case 'yearly':
+        if (!exportYear) return null;
+        params.set('year', exportYear);
+        break;
+      case 'custom':
+        if (!exportStartDate || !exportEndDate) return null;
+        params.set('startDate', exportStartDate);
+        params.set('endDate', exportEndDate);
+        break;
+    }
+    return params.toString();
+  };
+
+  const exportQuery = buildExportQuery();
+  const exportPeriodDescription = describeExportPeriod(exportPeriodType, {
+    date: exportDate,
+    monthNum: exportMonthNum,
+    quarter: exportQuarter,
+    year: exportYear,
+    start: exportStartDate,
+    end: exportEndDate,
+  });
+  const exportPeriodLabel = EXPORT_PERIOD_OPTIONS.find((o) => o.id === exportPeriodType)?.label || '';
   
   // Close Day Modal State
   const [showCloseModal, setShowCloseModal] = useState(false);
@@ -113,15 +358,19 @@ export default function SalesReportsPage() {
       if (exportRes.ok) {
         const exportData = await exportRes.json();
         if (exportData.sheets?.itemSalesSummary) {
+          // The Item Sales Summary sheet uses "Total Quantity Sold" / "Average Unit Price" columns
           setItemLevelSales(
-            exportData.sheets.itemSalesSummary.map((i: any) => ({
-              itemName: i['Item Name'] || i['Item'] || '',
-              category: i['Category'] || '',
-              quantitySold: typeof i['Quantity Sold'] === 'number' ? i['Quantity Sold'] : (typeof i['Quantity'] === 'number' ? i['Quantity'] : 0),
-              unitPrice: parseFloat(String(i['Unit Price'] || '0').replace(/[^0-9.]/g, '') || '0'),
-              totalSales: parseFloat(String(i['Total Sales'] || '0').replace(/[^0-9.]/g, '') || '0'),
-              status: (i['Quantity Sold'] ?? i['Quantity'] ?? 0) > 0 ? 'Sold' : 'Not Sold',
-            }))
+            exportData.sheets.itemSalesSummary.map((i: any) => {
+              const quantitySold = Number(i['Total Quantity Sold'] ?? i['Quantity Sold'] ?? 0) || 0;
+              return {
+                itemName: i['Item Name'] || '',
+                category: i['Category'] || '',
+                quantitySold,
+                unitPrice: Number(i['Average Unit Price'] ?? i['Current Price'] ?? 0) || 0,
+                totalSales: Number(i['Total Sales'] ?? 0) || 0,
+                status: quantitySold > 0 ? 'Sold' : 'Not Sold',
+              };
+            })
           );
         }
       }
@@ -144,88 +393,46 @@ export default function SalesReportsPage() {
   };
 
   const handleDownloadExcel = async () => {
+    const query = buildExportQuery();
+    if (!query) {
+      alert('Please choose the period you want to export first.');
+      return;
+    }
+
     setIsExporting(true);
     setExportStatus('Preparing Excel report...');
 
     try {
-      let exportUrl = `/api/export?period=${period}`;
-      if (period === 'custom' && startDate && endDate) {
-        exportUrl += `&startDate=${startDate}&endDate=${endDate}`;
-      }
-
-      setExportStatus('Generating complete item-level sales breakdown...');
-      const res = await fetch(exportUrl);
+      const res = await fetch(`/api/export?${query}`);
       const data = await res.json();
 
       if (!res.ok || data.error) {
-        alert(data.error || 'Unable to generate report because the sales totals do not match. Please try again or contact the administrator.');
-        setExportStatus(null);
-        setIsExporting(false);
+        alert(data.error || 'Unable to generate the Excel report. Please try again or contact the administrator.');
         return;
       }
 
-      if (!data.sheets) {
+      if (!data.sheets || !Array.isArray(data.workbook)) {
         alert('No data available to export for this period.');
-        setExportStatus(null);
-        setIsExporting(false);
         return;
       }
 
+      setExportStatus('Building 17 worksheets...');
       const wb = XLSX.utils.book_new();
+      for (const spec of data.workbook as ExportSheetSpec[]) {
+        addWorksheet(wb, data.sheets[spec.key] || [], spec);
+      }
 
-      const addSheet = (sheetData: any[], sheetName: string) => {
-        if (!sheetData || sheetData.length === 0) {
-          const emptyWs = XLSX.utils.aoa_to_sheet([['No data available for this section']]);
-          XLSX.utils.book_append_sheet(wb, emptyWs, sheetName);
-          return;
-        }
+      const fallbackName = `Dumerso_Coffee_Report_${data.startDate}_to_${data.endDate}.xlsx`;
+      XLSX.writeFile(wb, data.fileName || fallbackName);
 
-        const ws = XLSX.utils.json_to_sheet(sheetData);
-        const keys = Object.keys(sheetData[0]);
-        const cols = keys.map((key) => {
-          let maxLen = key.length;
-          sheetData.forEach((row) => {
-            const val = row[key];
-            if (val !== null && val !== undefined) {
-              maxLen = Math.max(maxLen, String(val).length);
-            }
-          });
-          return { wch: Math.min(Math.max(maxLen + 4, 12), 45) };
-        });
-        ws['!cols'] = cols;
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
-      };
-
-      // Add 17 Worksheets in Exact Requested Order
-      addSheet(data.sheets.salesSummary, 'Sales Summary');
-      addSheet(data.sheets.detailedSales, 'Detailed Sales');
-      addSheet(data.sheets.dailySalesSummary, 'Daily Sales Summary');
-      addSheet(data.sheets.dailyItemSales, 'Daily Item Sales');
-      addSheet(data.sheets.orders, 'Orders');
-      addSheet(data.sheets.orderItems, 'Order Items');
-      addSheet(data.sheets.menuItems, 'Menu Items');
-      addSheet(data.sheets.categorySales, 'Category Sales');
-      addSheet(data.sheets.paymentMethods, 'Payment Methods');
-      addSheet(data.sheets.bestSellingItems, 'Best Selling Items');
-      addSheet(data.sheets.unsoldItems, 'Unsold Items');
-      addSheet(data.sheets.monthlySales, 'Monthly Sales');
-      addSheet(data.sheets.monthlyItemSales, 'Monthly Item Sales');
-      addSheet(data.sheets.costsAndExpenses, 'Costs & Expenses');
-      addSheet(data.sheets.dailyFinancialReport, 'Daily Financial Report');
-      addSheet(data.sheets.monthlyFinancialReport, 'Monthly Financial Report');
-      addSheet(data.sheets.itemSalesSummary, 'Item Sales Summary');
-
-      const filename = `Dumerso_Coffee_Complete_Sales_Report_${data.startDate}_to_${data.endDate}.xlsx`;
-      XLSX.writeFile(wb, filename);
-
-      setExportStatus(null);
-      setToastMessage('Excel report downloaded successfully.');
-      setTimeout(() => setToastMessage(null), 4000);
+      const periodText = data.periodLabel || `${data.startDate} to ${data.endDate}`;
+      setToastMessage(`${data.reportTitle || 'Excel report'} downloaded (${periodText}).`);
+      setTimeout(() => setToastMessage(null), 5000);
     } catch (error) {
       console.error('Error downloading Excel file:', error);
       alert('An unexpected error occurred while generating the Excel report.');
-      setExportStatus(null);
     } finally {
+      setExportStatus(null);
       setIsExporting(false);
     }
   };
@@ -281,19 +488,6 @@ export default function SalesReportsPage() {
 
         {/* Header Action Buttons */}
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            onClick={handleDownloadExcel}
-            disabled={isExporting || isLoading}
-            className="inline-flex items-center gap-2 bg-gradient-to-r from-[#8B5A2B] to-[#724820] hover:from-[#724820] hover:to-[#5c3919] text-[#FFF4E3] px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all active:scale-95 border border-[#F3E4CB]/20 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Download className="w-4 h-4 text-amber-300" />
-            <span>
-              {isExporting
-                ? exportStatus || 'Preparing Excel report...'
-                : 'Download Complete Item-Level Sales Breakdown'}
-            </span>
-          </button>
-
           {report?.isTodayClosed ? (
             <div className="inline-flex items-center gap-2 bg-[#59D98A]/10 text-[#59D98A] border border-[#59D98A]/30 px-4 py-2.5 rounded-xl font-bold text-xs">
               <Lock className="w-4 h-4 text-[#59D98A]" />
@@ -363,29 +557,147 @@ export default function SalesReportsPage() {
         )}
       </div>
 
-      {/* Prominent Download Banner for Mobile / Quick Access */}
-      <div className="bg-[#24140C] rounded-2xl p-4 border border-[#8B5A2B]/40 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="flex items-center gap-3 text-left w-full sm:w-auto">
+      {/* Excel Export Panel */}
+      <div className="bg-[#24140C] rounded-2xl p-4 sm:p-5 border border-[#8B5A2B]/40 shadow-lg space-y-4">
+        <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-[#4A2917] border border-[#8B5A2B]/50 flex items-center justify-center shrink-0">
             <Download className="w-5 h-5 text-amber-300" />
           </div>
           <div>
-            <div className="text-xs font-bold text-[#F3E4CB]">
-              Download Complete Excel Business Report
+            <div className="text-sm font-serif font-bold text-[#F3E4CB]">
+              Download Excel Report
             </div>
-            <div className="text-[11px] text-[#CDB99D]">
-              Exports 11 detailed accounting worksheets for {report?.startDate || 'selected period'} → {report?.endDate || 'today'}
+            <div className="text-[11px] text-[#CDB99D] leading-relaxed">
+              Choose a report type and the period you want, then download. The workbook has 17 worksheets and every
+              amount is a real number, so you can edit, sort and total the data in Excel after downloading.
             </div>
           </div>
         </div>
 
-        <button
-          onClick={handleDownloadExcel}
-          disabled={isExporting || isLoading}
-          className="w-full sm:w-auto bg-[#8B5A2B] hover:bg-[#724820] text-[#FFF4E3] px-5 py-2.5 rounded-xl font-bold text-xs shadow-md transition-all active:scale-95 shrink-0 border border-[#F3E4CB]/30 disabled:opacity-50"
-        >
-          {isExporting ? (exportStatus || 'Generating Excel...') : 'Download Complete Item-Level Sales Breakdown'}
-        </button>
+        {/* Report type */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          {EXPORT_PERIOD_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setExportPeriodType(option.id)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                exportPeriodType === option.id
+                  ? 'bg-[#8B5A2B] text-[#FFF4E3] shadow-md border border-[#F3E4CB]/30'
+                  : 'bg-[#1A0D07] text-[#CDB99D] hover:bg-[#2D1A10] border border-[#4A2917]'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Period pickers + download button */}
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div className="flex flex-wrap items-end gap-3">
+            {(exportPeriodType === 'daily' || exportPeriodType === 'weekly') && (
+              <label className="flex flex-col gap-1 text-[11px] font-bold text-[#CDB99D]">
+                {exportPeriodType === 'daily' ? 'Day' : 'Any day in the week'}
+                <input
+                  type="date"
+                  value={exportDate}
+                  max={todayStr || undefined}
+                  onChange={(e) => setExportDate(e.target.value)}
+                  className={EXPORT_INPUT_CLASS}
+                />
+              </label>
+            )}
+
+            {exportPeriodType === 'monthly' && (
+              <label className="flex flex-col gap-1 text-[11px] font-bold text-[#CDB99D]">
+                Month
+                <select
+                  value={exportMonthNum}
+                  onChange={(e) => setExportMonthNum(e.target.value)}
+                  className={EXPORT_INPUT_CLASS}
+                >
+                  {MONTH_NAMES.map((name, index) => (
+                    <option key={name} value={pad2(index + 1)}>{name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {exportPeriodType === 'quarterly' && (
+              <label className="flex flex-col gap-1 text-[11px] font-bold text-[#CDB99D]">
+                Quarter
+                <select
+                  value={exportQuarter}
+                  onChange={(e) => setExportQuarter(e.target.value)}
+                  className={EXPORT_INPUT_CLASS}
+                >
+                  {QUARTER_OPTIONS.map((q) => (
+                    <option key={q.id} value={q.id}>{q.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {(exportPeriodType === 'monthly' || exportPeriodType === 'quarterly' || exportPeriodType === 'yearly') && (
+              <label className="flex flex-col gap-1 text-[11px] font-bold text-[#CDB99D]">
+                Year
+                <select
+                  value={exportYear}
+                  onChange={(e) => setExportYear(e.target.value)}
+                  className={EXPORT_INPUT_CLASS}
+                >
+                  {yearOptions.map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {exportPeriodType === 'custom' && (
+              <>
+                <label className="flex flex-col gap-1 text-[11px] font-bold text-[#CDB99D]">
+                  From
+                  <input
+                    type="date"
+                    value={exportStartDate}
+                    max={todayStr || undefined}
+                    onChange={(e) => setExportStartDate(e.target.value)}
+                    className={EXPORT_INPUT_CLASS}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[11px] font-bold text-[#CDB99D]">
+                  To
+                  <input
+                    type="date"
+                    value={exportEndDate}
+                    max={todayStr || undefined}
+                    onChange={(e) => setExportEndDate(e.target.value)}
+                    className={EXPORT_INPUT_CLASS}
+                  />
+                </label>
+              </>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleDownloadExcel}
+            disabled={isExporting || !exportQuery}
+            className="w-full lg:w-auto inline-flex items-center justify-center gap-2 bg-gradient-to-r from-[#8B5A2B] to-[#724820] hover:from-[#724820] hover:to-[#5c3919] text-[#FFF4E3] px-5 py-2.5 rounded-xl font-bold text-xs shadow-lg transition-all active:scale-95 border border-[#F3E4CB]/20 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            <Download className="w-4 h-4 text-amber-300" />
+            <span>
+              {isExporting ? (exportStatus || 'Preparing Excel report...') : `Download ${exportPeriodLabel} Excel Report`}
+            </span>
+          </button>
+        </div>
+
+        <div className="text-[11px] text-[#CDB99D]">
+          Report covers: <span className="font-bold text-[#F3E4CB]">{exportPeriodDescription}</span>
+          {exportPeriodType !== 'daily' && exportPeriodType !== 'custom' && (
+            <span> (a period that is still running includes data up to today)</span>
+          )}
+        </div>
       </div>
 
       {/* Summary KPI Cards */}
