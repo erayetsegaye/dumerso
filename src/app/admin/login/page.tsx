@@ -2,13 +2,25 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Lock, User, ArrowRight } from 'lucide-react';
+import { Lock, User, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import SafeImage from '@/components/SafeImage';
+
+/** Only allow redirects back into the admin area (blocks open-redirects). */
+function safeRedirectTarget(): string {
+  if (typeof window === 'undefined') return '/admin';
+  const from = new URLSearchParams(window.location.search).get('from');
+  if (from && from.startsWith('/admin') && !from.startsWith('/admin/login')) {
+    return from;
+  }
+  return '/admin';
+}
 
 export default function AdminLoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -21,19 +33,20 @@ export default function AdminLoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username: username.trim(), password, remember }),
       });
 
       const data = await res.json();
       if (res.ok) {
-        router.push('/admin');
+        router.replace(safeRedirectTarget());
         router.refresh();
       } else {
         setError(data.error || 'Invalid username or password');
+        setPassword('');
+        setIsLoading(false);
       }
     } catch (err) {
       setError('Something went wrong. Please try again.');
-    } finally {
       setIsLoading(false);
     }
   };
@@ -80,10 +93,14 @@ export default function AdminLoginPage() {
               <input
                 type="text"
                 required
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                disabled={isLoading}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter username"
-                className="w-full pl-10 pr-4 py-3 text-sm bg-[#1A0D07] border border-[#4A2917] rounded-xl text-[#F3E4CB] placeholder-[#CDB99D]/40 focus:outline-none focus:border-[#8B5A2B] font-medium"
+                className="w-full pl-10 pr-4 py-3 text-sm bg-[#1A0D07] border border-[#4A2917] rounded-xl text-[#F3E4CB] placeholder-[#CDB99D]/40 focus:outline-none focus:border-[#8B5A2B] font-medium disabled:opacity-60"
               />
             </div>
           </div>
@@ -95,22 +112,37 @@ export default function AdminLoginPage() {
             <div className="relative">
               <Lock className="w-4 h-4 text-[#8B5A2B] absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
+                autoFocus
+                autoComplete="current-password"
+                disabled={isLoading}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter password"
-                className="w-full pl-10 pr-4 py-3 text-sm bg-[#1A0D07] border border-[#4A2917] rounded-xl text-[#F3E4CB] placeholder-[#CDB99D]/40 focus:outline-none focus:border-[#8B5A2B] font-medium"
+                className="w-full pl-10 pr-11 py-3 text-sm bg-[#1A0D07] border border-[#4A2917] rounded-xl text-[#F3E4CB] placeholder-[#CDB99D]/40 focus:outline-none focus:border-[#8B5A2B] font-medium disabled:opacity-60"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[#8B5A2B] hover:text-[#F3E4CB] transition-colors"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 
           <div className="flex items-center justify-between text-xs text-[#CDB99D]">
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" className="rounded accent-[#8B5A2B]" defaultChecked />
-              <span>Remember me</span>
+              <input
+                type="checkbox"
+                className="rounded accent-[#8B5A2B]"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
+              <span>Keep me signed in for 7 days</span>
             </label>
-            <a href="#" className="hover:text-[#F3E4CB] transition-colors">Forgot password?</a>
           </div>
 
           <button
@@ -131,7 +163,7 @@ export default function AdminLoginPage() {
 
         <div className="text-center pt-2 border-t border-[#4A2917]/60">
           <p className="text-[11px] text-[#CDB99D]">
-            Default Password: <code className="bg-[#1A0D07] px-1.5 py-0.5 rounded font-mono font-bold text-[#FFF4E3] border border-[#4A2917]">dumerso123</code>
+            Authorized staff only. Lost your password? Contact the cafe owner.
           </p>
         </div>
 

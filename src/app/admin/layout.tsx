@@ -17,6 +17,7 @@ import {
   X,
   User,
   ExternalLink,
+  Loader2,
 } from 'lucide-react';
 import SafeImage from '@/components/SafeImage';
 
@@ -29,18 +30,56 @@ export default function AdminLayout({
   const router = useRouter();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [settings, setSettings] = useState<{ cafeName?: string; logoUrl?: string }>({});
+  const [authUser, setAuthUser] = useState<{ username: string } | null>(null);
+  const isLoginPage = pathname === '/admin/login';
+
+  // Verify the session on every admin page load. The middleware only checks
+  // that the cookie exists; this confirms the token is actually valid.
+  useEffect(() => {
+    if (isLoginPage) return;
+    let cancelled = false;
+
+    fetch('/api/auth/me')
+      .then(async (res) => {
+        if (cancelled) return;
+        if (!res.ok) {
+          router.replace(`/admin/login?from=${encodeURIComponent(pathname)}`);
+          return;
+        }
+        const data = await res.json();
+        setAuthUser(data.user ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) router.replace('/admin/login');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoginPage, pathname, router]);
 
   useEffect(() => {
-    if (pathname === '/admin/login') return;
+    if (isLoginPage) return;
 
     fetch('/api/settings')
       .then((res) => res.json())
       .then((data) => setSettings(data))
       .catch((err) => console.error(err));
-  }, [pathname]);
+  }, [isLoginPage]);
 
-  if (pathname === '/admin/login') {
+  if (isLoginPage) {
     return <>{children}</>;
+  }
+
+  // Hold the dashboard back until we know the session is valid, so protected
+  // data never flashes on screen for a signed-out visitor.
+  if (!authUser) {
+    return (
+      <div className="min-h-screen bg-[#1A0D07] text-[#CDB99D] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-6 h-6 animate-spin text-[#8B5A2B]" />
+        <p className="text-xs font-bold uppercase tracking-widest">Checking session...</p>
+      </div>
+    );
   }
 
   const navItems = [
@@ -55,7 +94,9 @@ export default function AdminLayout({
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/admin/login');
+    setAuthUser(null);
+    router.replace('/admin/login');
+    router.refresh();
   };
 
   return (
@@ -186,7 +227,7 @@ export default function AdminLayout({
           <div className="flex items-center gap-4 text-xs font-medium text-[#CDB99D]">
             <div className="flex items-center gap-2 bg-[#1A0D07] px-3 py-1.5 rounded-full border border-[#4A2917]">
               <User className="w-3.5 h-3.5 text-[#8B5A2B]" />
-              <span className="text-[#F3E4CB] font-bold">Admin</span>
+              <span className="text-[#F3E4CB] font-bold">{authUser.username}</span>
             </div>
 
             <button

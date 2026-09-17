@@ -7,7 +7,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dumerso-cafe-secret-key-2026';
 
 export async function POST(request: Request) {
   try {
-    const { username, password } = await request.json();
+    const { username, password, remember = true } = await request.json();
 
     if (!username || !password) {
       return NextResponse.json({ error: 'Username and password are required' }, { status: 400 });
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     const token = jwt.sign(
       { id: admin.id, username: admin.username },
       JWT_SECRET,
-      { expiresIn: '7d' }
+      { expiresIn: remember ? '7d' : '12h' }
     );
 
     const response = NextResponse.json({
@@ -41,7 +41,9 @@ export async function POST(request: Request) {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60,
+      // "Remember me" keeps the cookie for 7 days; otherwise it is a
+      // session cookie that disappears when the browser closes.
+      ...(remember ? { maxAge: 7 * 24 * 60 * 60 } : {}),
       path: '/',
     });
 
