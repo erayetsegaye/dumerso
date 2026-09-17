@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessAdmin } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +9,9 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
+    const denied = await denyUnlessAdmin();
+    if (denied) return denied;
+
     const { id } = params;
     const body = await request.json();
     const { name, description, costType, amount, percentage, active } = body;
@@ -98,6 +102,9 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const denied = await denyUnlessAdmin();
+    if (denied) return denied;
+
     const { id } = params;
 
     const existingCost = await prisma.cost.findUnique({

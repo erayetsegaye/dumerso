@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessApproved } from '@/lib/api-auth';
 
 export async function PUT(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const body = await request.json();
     const { name, icon, order } = body;
 
@@ -30,6 +34,9 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     await prisma.category.delete({
       where: { id: params.id },
     });

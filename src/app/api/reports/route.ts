@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessAdmin, denyUnlessApproved } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +13,10 @@ function getLocalDateString(dateObj = new Date()) {
 
 export async function GET(request: Request) {
   try {
+    // Readable by staff (dashboard totals); closing the day is admin-only.
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const { searchParams } = new URL(request.url);
     const period = searchParams.get('period') || 'today';
     const startDateParam = searchParams.get('startDate');
@@ -167,6 +172,9 @@ export async function GET(request: Request) {
 // POST endpoint for "Close Today's Sales"
 export async function POST() {
   try {
+    const denied = await denyUnlessAdmin();
+    if (denied) return denied;
+
     const todayStr = getLocalDateString(new Date());
 
     // Fetch today's completed orders

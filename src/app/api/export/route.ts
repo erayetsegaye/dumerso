@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessAdmin } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,10 @@ function getMonthName(yearMonthStr: string): string {
 
 export async function GET(request: Request) {
   try {
+    // Full sales history dump: admins only.
+    const denied = await denyUnlessAdmin();
+    if (denied) return denied;
+
     const { searchParams } = new URL(request.url);
     const period = searchParams.get('period') || 'month';
     const startDateParam = searchParams.get('startDate');

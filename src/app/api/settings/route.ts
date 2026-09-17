@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessAdmin } from '@/lib/api-auth';
 
 // Never prerender/cache this at build time: without it the cafe settings are
 // frozen into a static response and edits in the admin panel never show up
@@ -36,6 +37,10 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
+    // Cafe identity (name, logo, socials): admins only.
+    const denied = await denyUnlessAdmin();
+    if (denied) return denied;
+
     const body = await request.json();
     const settings = await prisma.settings.upsert({
       where: { id: 'default' },

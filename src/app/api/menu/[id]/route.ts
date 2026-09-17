@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessApproved } from '@/lib/api-auth';
 
+// GET stays public: the customer menu needs it.
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
@@ -27,6 +29,9 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const body = await request.json();
     
     const updateData: any = {};
@@ -76,6 +81,9 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const item = await prisma.menuItem.findUnique({
       where: { id: params.id },
     });

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessApproved } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,6 +24,10 @@ function getLocalTimeString(dateObj = new Date()) {
 
 export async function GET(request: Request) {
   try {
+    // Sales data: never public.
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const { searchParams } = new URL(request.url);
     const date = searchParams.get('date');
     const startDate = searchParams.get('startDate');
@@ -58,6 +63,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const body = await request.json();
     const { items: orderItems, paymentMethod = 'Cash' } = body;
 

@@ -1,9 +1,14 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { denyUnlessApproved } from '@/lib/api-auth';
 
 export async function POST(request: Request) {
   try {
+    // Anyone could otherwise write arbitrary files into /public/uploads.
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const contentType = request.headers.get('content-type') || '';
 
     if (contentType.includes('multipart/form-data')) {

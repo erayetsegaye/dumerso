@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessAdmin, denyUnlessApproved } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,10 @@ function getDaysInMonth(year: number, monthZeroIndexed: number): number {
 
 export async function GET(request: Request) {
   try {
+    // Readable by staff so the dashboard summary works; only admins can edit.
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const { searchParams } = new URL(request.url);
     const period = searchParams.get('period') || 'today';
     const startDateParam = searchParams.get('startDate');
@@ -239,6 +244,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const denied = await denyUnlessAdmin();
+    if (denied) return denied;
+
     const body = await request.json();
     const { name, description, costType, amount, percentage, active } = body;
 

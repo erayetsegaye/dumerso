@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessApproved } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const activities = await prisma.activityLog.findMany({
       orderBy: { createdAt: 'desc' },
       take: 10,

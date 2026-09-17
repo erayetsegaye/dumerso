@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { denyUnlessApproved } from '@/lib/api-auth';
 
+// GET stays public: the customer menu needs it.
 export async function GET() {
   try {
     const categories = await prisma.category.findMany({
@@ -21,6 +23,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const denied = await denyUnlessApproved();
+    if (denied) return denied;
+
     const body = await request.json();
     const { name, icon, order } = body;
 
