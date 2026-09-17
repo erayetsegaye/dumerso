@@ -31,12 +31,18 @@ async function main() {
   });
 
   // 2. Seed Admin User
-  const hashedPassword = await bcrypt.hash('dumerso123', 10);
+  // Credentials come from the environment when available so the repo never
+  // carries real ones. Change them any time with:
+  //   npm run admin:set -- --email=you@example.com --generate
+  const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+  const adminEmail = (process.env.ADMIN_EMAIL || 'admin@dumerso.local').toLowerCase();
+  const hashedPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'dumerso123', 12);
   await prisma.adminUser.upsert({
-    where: { username: 'admin' },
-    update: { password: hashedPassword },
+    where: { username: adminUsername },
+    update: { email: adminEmail, password: hashedPassword },
     create: {
-      username: 'admin',
+      username: adminUsername,
+      email: adminEmail,
       password: hashedPassword,
     },
   });

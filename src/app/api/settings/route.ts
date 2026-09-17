@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
+// Never prerender/cache this at build time: without it the cafe settings are
+// frozen into a static response and edits in the admin panel never show up
+// on a hosted deployment.
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     let settings = await prisma.settings.findUnique({

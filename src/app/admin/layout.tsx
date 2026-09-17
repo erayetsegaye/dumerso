@@ -12,6 +12,8 @@ import {
   DollarSign,
   FileSpreadsheet,
   Settings,
+  UserCog,
+  Users,
   LogOut,
   Menu,
   X,
@@ -20,6 +22,21 @@ import {
   Loader2,
 } from 'lucide-react';
 import SafeImage from '@/components/SafeImage';
+
+type AuthUser = {
+  email: string | null;
+  displayName: string | null;
+  role: 'pending' | 'staff' | 'admin';
+  disabled: boolean;
+};
+
+/** Sign-in and holding screens render without the dashboard shell. */
+const STANDALONE_PAGES = [
+  '/admin/login',
+  '/admin/signup',
+  '/admin/legacy-login',
+  '/admin/pending',
+];
 
 export default function AdminLayout({
   children,
@@ -30,13 +47,15 @@ export default function AdminLayout({
   const router = useRouter();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [settings, setSettings] = useState<{ cafeName?: string; logoUrl?: string }>({});
-  const [authUser, setAuthUser] = useState<{ username: string } | null>(null);
-  const isLoginPage = pathname === '/admin/login';
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+
+  // Pages that render on their own, without the dashboard chrome.
+  const isStandalonePage = STANDALONE_PAGES.includes(pathname);
 
   // Verify the session on every admin page load. The middleware only checks
-  // that the cookie exists; this confirms the token is actually valid.
+  // that the cookie exists; this confirms it is valid and carries a role.
   useEffect(() => {
-    if (isLoginPage) return;
+    if (isStandalonePage) return;
     let cancelled = false;
 
     fetch('/api/auth/me')
@@ -47,7 +66,15 @@ export default function AdminLayout({
           return;
         }
         const data = await res.json();
-        setAuthUser(data.user ?? null);
+        const user: AuthUser = data.user;
+
+        // Signed in but not approved yet (or switched off) -> holding page.
+        if (!user || user.disabled || user.role === 'pending') {
+          router.replace('/admin/pending');
+          return;
+        }
+
+        setAuthUser(user);
       })
       .catch(() => {
         if (!cancelled) router.replace('/admin/login');
@@ -56,18 +83,18 @@ export default function AdminLayout({
     return () => {
       cancelled = true;
     };
-  }, [isLoginPage, pathname, router]);
+  }, [isStandalonePage, pathname, router]);
 
   useEffect(() => {
-    if (isLoginPage) return;
+    if (isStandalonePage) return;
 
     fetch('/api/settings')
       .then((res) => res.json())
       .then((data) => setSettings(data))
       .catch((err) => console.error(err));
-  }, [isLoginPage]);
+  }, [isStandalonePage]);
 
-  if (isLoginPage) {
+  if (isStandalonePage) {
     return <>{children}</>;
   }
 
@@ -90,10 +117,24 @@ export default function AdminLayout({
     { name: 'Sales Reports', href: '/admin/reports', icon: BarChart3 },
     { name: 'Costs & Expenses', href: '/admin/costs', icon: DollarSign },
     { name: 'Settings', href: '/admin/settings', icon: Settings },
+    { name: 'My Account', href: '/admin/account', icon: UserCog },
+    // Only admins hand out access.
+    ...(authUser.role === 'admin'
+      ? [{ name: 'Staff Access', href: '/admin/users', icon: Users }]
+      : []),
   ];
 
   const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    // Clears the Firebase session cookie and the legacy cookie server-side.
+    await fetch('/api/auth/session', { method: 'DELETE' });
+
+    try {
+      const { getFirebaseAuth, isFirebaseConfigured } = await import('@/lib/firebase/client');
+      if (isFirebaseConfigured()) await getFirebaseAuth().signOut();
+    } catch {
+      // Client SDK not configured - the server cookie is already cleared.
+    }
+
     setAuthUser(null);
     router.replace('/admin/login');
     router.refresh();
@@ -227,7 +268,12 @@ export default function AdminLayout({
           <div className="flex items-center gap-4 text-xs font-medium text-[#CDB99D]">
             <div className="flex items-center gap-2 bg-[#1A0D07] px-3 py-1.5 rounded-full border border-[#4A2917]">
               <User className="w-3.5 h-3.5 text-[#8B5A2B]" />
-              <span className="text-[#F3E4CB] font-bold">{authUser.username}</span>
+              <span className="text-[#F3E4CB] font-bold">
+                {authUser.displayName || authUser.email || 'Admin'}
+              </span>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#8B5A2B]">
+                {authUser.role}
+              </span>
             </div>
 
             <button

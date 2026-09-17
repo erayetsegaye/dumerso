@@ -2,3 +2,7 @@ node_modules/
 .next/
 .env
 *.tsbuildinfo
+*.db.bak
+firebase-service-account.json
+.firebase/
+dev.log

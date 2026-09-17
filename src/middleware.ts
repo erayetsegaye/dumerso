@@ -4,17 +4,23 @@ import type { NextRequest } from 'next/server';
 /**
  * Gate-keeps the whole admin area.
  *
- * Middleware runs on the Edge runtime, where `jsonwebtoken` is not available,
- * so here we only check that the session cookie exists (cheap + fast).
- * The real signature check happens in `/api/auth/me`, which the admin layout
- * calls on every page load.
+ * Middleware runs on the Edge runtime, where firebase-admin cannot verify a
+ * session, so this only checks that a session cookie exists (cheap + fast).
+ * Real verification and the role check happen in `/api/auth/me`, which the
+ * admin layout calls on every page load.
  */
+const PUBLIC_ADMIN_PATHS = ['/admin/login', '/admin/signup', '/admin/legacy-login'];
+
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  const hasSession = Boolean(request.cookies.get('admin_token')?.value);
+  const hasSession =
+    Boolean(request.cookies.get('admin_session')?.value) ||
+    Boolean(request.cookies.get('admin_token')?.value);
 
-  // Already signed in? Skip the login screen.
-  if (pathname === '/admin/login') {
+  const isPublicPath = PUBLIC_ADMIN_PATHS.includes(pathname);
+
+  // Already signed in? Skip the sign-in screens.
+  if (isPublicPath) {
     if (hasSession) {
       return NextResponse.redirect(new URL('/admin', request.url));
     }

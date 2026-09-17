@@ -2,19 +2,41 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { legacyLoginEnabled } from '@/lib/auth';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dumerso-cafe-secret-key-2026';
 
+/**
+ * DEPRECATED username/password login, kept only so the cafe is not locked out
+ * while Google sign-in is being set up. Disable it with
+ * ALLOW_LEGACY_ADMIN_LOGIN=false in .env, then this route can be deleted.
+ */
 export async function POST(request: Request) {
   try {
-    const { username, password, remember = true } = await request.json();
-
-    if (!username || !password) {
-      return NextResponse.json({ error: 'Username and password are required' }, { status: 400 });
+    if (!legacyLoginEnabled()) {
+      return NextResponse.json(
+        { error: 'Password login is disabled. Please sign in with Google.' },
+        { status: 403 }
+      );
     }
 
-    const admin = await prisma.adminUser.findUnique({
-      where: { username },
+    const body = await request.json();
+    const { password, remember = true } = body;
+
+    // Accept a username or an email address in the same field.
+    const identifier = String(body.identifier ?? body.username ?? body.email ?? '').trim();
+
+    if (!identifier || !password) {
+      return NextResponse.json(
+        { error: 'Username/email and password are required' },
+        { status: 400 }
+      );
+    }
+
+    const admin = await prisma.adminUser.findFirst({
+      where: {
+        OR: [{ username: identifier }, { email: identifier.toLowerCase() }],
+      },
     });
 
     if (!admin) {
@@ -34,7 +56,7 @@ export async function POST(request: Request) {
 
     const response = NextResponse.json({
       success: true,
-      user: { id: admin.id, username: admin.username },
+      user: { id: admin.id, username: admin.username, email: admin.email },
     });
 
     response.cookies.set('admin_token', token, {

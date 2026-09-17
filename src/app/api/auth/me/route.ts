@@ -1,31 +1,28 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
-import { prisma } from '@/lib/db';
+import { getSessionUser } from '@/lib/auth';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dumerso-cafe-secret-key-2026';
+export const dynamic = 'force-dynamic';
 
+/** Who am I? Used by the admin layout to gate pages by role. */
 export async function GET() {
-  try {
-    const cookieStore = cookies();
-    const token = cookieStore.get('admin_token')?.value;
+  const user = await getSessionUser();
 
-    if (!token) {
-      return NextResponse.json({ authenticated: false }, { status: 401 });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: string; username: string };
-    const admin = await prisma.adminUser.findUnique({
-      where: { id: decoded.id },
-      select: { id: true, username: true, createdAt: true },
-    });
-
-    if (!admin) {
-      return NextResponse.json({ authenticated: false }, { status: 401 });
-    }
-
-    return NextResponse.json({ authenticated: true, user: admin });
-  } catch (error) {
+  if (!user) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }
+
+  return NextResponse.json({
+    authenticated: true,
+    user: {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      photoURL: user.photoURL,
+      role: user.role,
+      disabled: user.disabled,
+      provider: user.provider,
+      // Kept so older callers that read `username` keep working.
+      username: user.displayName || user.email || 'admin',
+    },
+  });
 }

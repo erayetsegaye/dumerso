@@ -1,38 +1,27 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Loader2, AlertTriangle, LockKeyhole } from 'lucide-react';
+import { KeyRound, ShieldCheck, Loader2, AlertTriangle } from 'lucide-react';
 import SafeImage from '@/components/SafeImage';
 import { describeAuthError, isFirebaseConfigured, signInWithGoogle } from '@/lib/firebase/client';
 
-/** Only allow redirects back into the admin area (blocks open-redirects). */
-function safeRedirectTarget(): string {
-  if (typeof window === 'undefined') return '/admin';
-  const from = new URLSearchParams(window.location.search).get('from');
-  if (from && from.startsWith('/admin') && !from.startsWith('/admin/login')) {
-    return from;
-  }
-  return '/admin';
-}
-
-export default function AdminLoginPage() {
+export default function AdminSignupPage() {
   const router = useRouter();
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [legacyEnabled, setLegacyEnabled] = useState(false);
   const configured = isFirebaseConfigured();
 
-  useEffect(() => {
-    fetch('/api/auth/config')
-      .then((res) => res.json())
-      .then((data) => setLegacyEnabled(Boolean(data.legacyLoginEnabled)))
-      .catch(() => setLegacyEnabled(false));
-  }, []);
-
-  const handleGoogleLogin = async () => {
+  const handleGoogleSignup = async () => {
     setError('');
+
+    if (!inviteCode.trim()) {
+      setError('Please enter the invite code you were given.');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -41,21 +30,22 @@ export default function AdminLoginPage() {
       const res = await fetch('/api/auth/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
+        body: JSON.stringify({ idToken, inviteCode: inviteCode.trim() }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
+        // The server rejected us (bad invite code, disabled account): drop the
+        // client-side Firebase session too so nothing is left half signed-in.
         const { getFirebaseAuth } = await import('@/lib/firebase/client');
         await getFirebaseAuth().signOut().catch(() => undefined);
-        setError(data.error || 'You do not have access to this dashboard.');
+        setError(data.error || 'Could not create your account.');
         setIsLoading(false);
         return;
       }
 
-      const role = data.user?.role;
-      router.replace(role === 'admin' || role === 'staff' ? safeRedirectTarget() : '/admin/pending');
+      router.replace(data.user?.role === 'admin' || data.user?.role === 'staff' ? '/admin' : '/admin/pending');
       router.refresh();
     } catch (err) {
       setError(describeAuthError(err));
@@ -85,7 +75,7 @@ export default function AdminLoginPage() {
             <h1 className="text-2xl font-serif font-extrabold text-[#F3E4CB] tracking-wider uppercase">
               DUMERSO COFFEE
             </h1>
-            <p className="text-xs text-[#CDB99D] font-medium mt-0.5">Admin Dashboard Login</p>
+            <p className="text-xs text-[#CDB99D] font-medium mt-0.5">Request Staff Access</p>
           </div>
         </div>
 
@@ -94,7 +84,7 @@ export default function AdminLoginPage() {
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
               Firebase is not configured yet. Add the <code>NEXT_PUBLIC_FIREBASE_*</code> values to{' '}
-              <code>.env</code>, or use the password login below.
+              <code>.env</code> to enable sign-ups.
             </span>
           </div>
         )}
@@ -106,44 +96,66 @@ export default function AdminLoginPage() {
         )}
 
         <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-[#CDB99D] uppercase tracking-wider mb-1.5">
+              Invite Code
+            </label>
+            <div className="relative">
+              <KeyRound className="w-4 h-4 text-[#8B5A2B] absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                required
+                autoFocus
+                autoCapitalize="characters"
+                spellCheck={false}
+                disabled={isLoading || !configured}
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleGoogleSignup();
+                }}
+                placeholder="Code from the cafe owner"
+                className="w-full pl-10 pr-4 py-3 text-sm bg-[#1A0D07] border border-[#4A2917] rounded-xl text-[#F3E4CB] placeholder-[#CDB99D]/40 focus:outline-none focus:border-[#8B5A2B] font-medium disabled:opacity-60"
+              />
+            </div>
+          </div>
+
           <button
             type="button"
-            onClick={handleGoogleLogin}
+            onClick={handleGoogleSignup}
             disabled={isLoading || !configured}
             className="w-full bg-[#FFF4E3] hover:bg-white text-[#1A0D07] font-bold py-3.5 rounded-xl shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2.5 text-sm disabled:opacity-60"
           >
             {isLoading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Signing in...</span>
+                <span>Creating your account...</span>
               </>
             ) : (
               <>
                 <GoogleMark />
-                <span>Continue with Google</span>
+                <span>Sign up with Google</span>
               </>
             )}
           </button>
 
-          <p className="text-[11px] text-center text-[#CDB99D]">
-            Need access?{' '}
-            <Link href="/admin/signup" className="font-bold text-[#F3E4CB] hover:underline">
-              Request it with an invite code
+          <div className="bg-[#1A0D07] border border-[#4A2917] rounded-xl p-3.5 flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-[#8B5A2B] shrink-0 mt-0.5" />
+            <p className="text-[11px] text-[#CDB99D] leading-relaxed">
+              New accounts start with <strong className="text-[#F3E4CB]">no access</strong>. The cafe
+              owner has to approve you before the dashboard opens up.
+            </p>
+          </div>
+        </div>
+
+        <div className="text-center pt-2 border-t border-[#4A2917]/60">
+          <p className="text-[11px] text-[#CDB99D]">
+            Already have access?{' '}
+            <Link href="/admin/login" className="font-bold text-[#F3E4CB] hover:underline">
+              Sign in
             </Link>
           </p>
         </div>
-
-        {legacyEnabled && (
-          <div className="text-center pt-3 border-t border-[#4A2917]/60">
-            <Link
-              href="/admin/legacy-login"
-              className="inline-flex items-center gap-1.5 text-[11px] text-[#CDB99D] hover:text-[#F3E4CB] transition-colors"
-            >
-              <LockKeyhole className="w-3.5 h-3.5" />
-              Use the old password login
-            </Link>
-          </div>
-        )}
 
       </div>
     </div>
