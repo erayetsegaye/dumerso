@@ -1,19 +1,14 @@
 rules_version = '2';
-
-// Roles are written ONLY by the server (Firebase Admin SDK bypasses these
-// rules). Every browser-side path is denied, so a signed-in user cannot
-// promote themselves to admin from the console.
-//
-// Deploy with:  firebase deploy --only firestore:rules
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Staff accounts and their roles: server-managed, never client-writable.
+    // Users can read their own profiles, but only the Server/Admin SDK can write to them.
     match /users/{uid} {
-      allow read, write: if false;
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
     }
 
-    // Default deny for anything added later.
+    // Default deny for anything else
     match /{document=**} {
       allow read, write: if false;
     }
