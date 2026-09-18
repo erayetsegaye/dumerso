@@ -8,3 +8,6 @@ firebase-service-account.json
 dev.log
 firebase-debug.log
 firestore-debug.log
+*adminsdk*.json
+*-firebase-adminsdk-*.json
+*serviceAccount*.json
