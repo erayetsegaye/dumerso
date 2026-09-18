@@ -20,7 +20,6 @@ export async function GET() {
       photoURL: user.photoURL,
       role: user.role,
       disabled: user.disabled,
-      provider: user.provider,
       // Kept so older callers that read `username` keep working.
       username: user.displayName || user.email || 'admin',
     },

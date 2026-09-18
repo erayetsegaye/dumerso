@@ -1,279 +1,127 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { User, Lock, Check, KeyRound, AtSign, Mail } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { AtSign, ExternalLink, Loader2, LogOut, ShieldCheck, User } from 'lucide-react';
 
+type Account = {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+  role: 'pending' | 'staff' | 'admin';
+  disabled: boolean;
+};
+
+const ROLE_BLURB: Record<Account['role'], string> = {
+  admin: 'Full access, including staff approval and financial reports.',
+  staff: 'Can take orders and manage the menu. Cannot change costs or settings.',
+  pending: 'Waiting for an administrator to approve this account.',
+};
+
+/**
+ * Identity is managed by Google, so there is no password to change here.
+ * This page just shows who you are signed in as and what you can do.
+ */
 export default function AdminAccountPage() {
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-
-  const [account, setAccount] = useState<{ username: string; email: string | null } | null>(null);
-  const [email, setEmail] = useState('');
-  const [emailPassword, setEmailPassword] = useState('');
-  const [isSavingEmail, setIsSavingEmail] = useState(false);
-  const [emailError, setEmailError] = useState('');
-
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState('');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const router = useRouter();
+  const [account, setAccount] = useState<Account | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     fetch('/api/auth/me')
       .then((res) => res.json())
-      .then((data) => {
-        if (data?.user) {
-          setAccount(data.user);
-          setEmail(data.user.email || '');
-        }
-      })
-      .catch((err) => console.error(err));
+      .then((data) => setAccount(data?.user ?? null))
+      .catch((err) => console.error(err))
+      .finally(() => setIsLoading(false));
   }, []);
 
-  const showToast = (message: string) => {
-    setToastMessage(message);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
-
-  const handleEmailSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setEmailError('');
-    setIsSavingEmail(true);
-
+  const handleSignOut = async () => {
+    await fetch('/api/auth/session', { method: 'DELETE' });
     try {
-      const res = await fetch('/api/auth/account', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, currentPassword: emailPassword }),
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setAccount(data.user);
-        setEmail(data.user.email || '');
-        setEmailPassword('');
-        showToast('Email updated successfully!');
-      } else {
-        setEmailError(data.error || 'Failed to update email');
-      }
-    } catch (err) {
-      setEmailError('Error updating email');
-    } finally {
-      setIsSavingEmail(false);
+      const { getFirebaseAuth, isFirebaseConfigured } = await import('@/lib/firebase/client');
+      if (isFirebaseConfigured()) await getFirebaseAuth().signOut();
+    } catch {
+      // Client SDK unavailable; the server cookie is already cleared.
     }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    if (newPassword !== confirmPassword) {
-      setError('New passwords do not match');
-      return;
-    }
-
-    if (newPassword.length < 8) {
-      setError('Password must be at least 8 characters long');
-      return;
-    }
-
-    setIsSubmitting(true);
-
-    try {
-      const res = await fetch('/api/auth/password', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword, newPassword }),
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        showToast('Password updated successfully!');
-        setCurrentPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-      } else {
-        setError(data.error || 'Failed to change password');
-      }
-    } catch (err) {
-      setError('Error changing password');
-    } finally {
-      setIsSubmitting(false);
-    }
+    router.replace('/admin/login');
+    router.refresh();
   };
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
-      
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed top-5 right-5 z-50 bg-amber-950 text-amber-50 px-4 py-3 rounded-2xl shadow-xl border border-amber-600 flex items-center gap-2 text-xs font-semibold animate-bounce">
-          <Check className="w-4 h-4 text-emerald-400" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
-      {/* Header */}
       <div className="bg-white p-5 rounded-3xl border border-amber-200 shadow-sm">
         <h1 className="text-xl sm:text-2xl font-extrabold text-amber-950 font-serif">
-          👤 Account Settings
+          👤 Account
         </h1>
         <p className="text-xs text-amber-800/80 mt-0.5">
-          Update your sign-in email and password to keep your dashboard secure.
+          You sign in with Google, so your name, email and password are managed by your Google
+          account.
         </p>
-
-        {account && (
-          <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
-            <span className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-900 border border-amber-200 px-3 py-1.5 rounded-full">
-              <User className="w-3.5 h-3.5 text-amber-600" />
-              {account.username}
-            </span>
-            <span className="inline-flex items-center gap-1.5 bg-amber-50 text-amber-900 border border-amber-200 px-3 py-1.5 rounded-full">
-              <Mail className="w-3.5 h-3.5 text-amber-600" />
-              {account.email || 'No email set'}
-            </span>
-          </div>
-        )}
       </div>
 
-      {/* Email */}
-      <form
-        onSubmit={handleEmailSubmit}
-        className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200 shadow-sm space-y-5"
-      >
-        <h2 className="text-sm font-extrabold text-amber-950 uppercase tracking-wider flex items-center gap-2">
-          <AtSign className="w-4 h-4 text-amber-600" />
-          Sign-in Email
-        </h2>
-
-        {emailError && (
-          <div className="bg-rose-50 text-rose-700 text-xs p-3.5 rounded-2xl font-semibold">
-            {emailError}
-          </div>
-        )}
-
-        <div className="space-y-1.5">
-          <label className="block text-xs font-extrabold text-amber-950 uppercase tracking-wider">
-            Email Address
-          </label>
-          <div className="relative">
-            <Mail className="w-4 h-4 text-amber-600 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="email"
-              required
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="w-full pl-10 pr-4 py-3 text-sm bg-amber-50/50 border border-amber-200 rounded-xl text-amber-950 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-          <p className="text-[11px] text-amber-800/70">
-            You can sign in with either your username or this email address.
-          </p>
+      {isLoading ? (
+        <div className="bg-white rounded-3xl p-10 border border-amber-200 flex flex-col items-center gap-3 text-amber-800">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <p className="text-xs font-bold uppercase tracking-widest">Loading account...</p>
         </div>
-
-        <div className="space-y-1.5">
-          <label className="block text-xs font-extrabold text-amber-950 uppercase tracking-wider">
-            Confirm With Password
-          </label>
-          <div className="relative">
-            <Lock className="w-4 h-4 text-amber-600 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="password"
-              required
-              autoComplete="current-password"
-              value={emailPassword}
-              onChange={(e) => setEmailPassword(e.target.value)}
-              placeholder="Enter your current password"
-              className="w-full pl-10 pr-4 py-3 text-sm bg-amber-50/50 border border-amber-200 rounded-xl text-amber-950 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-        </div>
-
-        <button
-          type="submit"
-          disabled={isSavingEmail}
-          className="w-full bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-sm py-3.5 rounded-2xl shadow-lg transition-all active:scale-[0.99] disabled:opacity-60"
-        >
-          {isSavingEmail ? 'Saving email...' : 'SAVE EMAIL'}
-        </button>
-      </form>
-
-      {error && (
+      ) : !account ? (
         <div className="bg-rose-50 text-rose-700 text-xs p-3.5 rounded-2xl font-semibold">
-          {error}
+          Could not load your account. Try signing in again.
+        </div>
+      ) : (
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200 shadow-sm space-y-6">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-full bg-amber-100 border border-amber-200 overflow-hidden flex items-center justify-center shrink-0">
+              {account.photoURL ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={account.photoURL} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <User className="w-6 h-6 text-amber-700" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-base font-extrabold text-amber-950 truncate">
+                {account.displayName || 'Signed in'}
+              </p>
+              <p className="text-xs text-amber-800/80 flex items-center gap-1.5 truncate">
+                <AtSign className="w-3.5 h-3.5 text-amber-600" />
+                {account.email}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-amber-600" />
+              <span className="text-xs font-extrabold text-amber-950 uppercase tracking-wider">
+                Role: {account.role}
+              </span>
+            </div>
+            <p className="text-[11px] text-amber-800/80">{ROLE_BLURB[account.role]}</p>
+          </div>
+
+          <div className="space-y-2 pt-2 border-t border-amber-100">
+            <a
+              href="https://myaccount.google.com/"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 text-xs font-semibold text-amber-800 hover:text-amber-950 transition-colors"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-amber-600" />
+              Manage your Google account (name, photo, password)
+            </a>
+
+            <button
+              onClick={handleSignOut}
+              className="w-full mt-2 flex items-center justify-center gap-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-extrabold text-sm py-3 rounded-2xl transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign out
+            </button>
+          </div>
         </div>
       )}
-
-      <form onSubmit={handleSubmit} className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200 shadow-sm space-y-5">
-        <h2 className="text-sm font-extrabold text-amber-950 uppercase tracking-wider flex items-center gap-2">
-          <KeyRound className="w-4 h-4 text-amber-600" />
-          Change Password
-        </h2>
-
-        <div className="space-y-1.5">
-          <label className="block text-xs font-extrabold text-amber-950 uppercase tracking-wider">
-            Current Password
-          </label>
-          <div className="relative">
-            <Lock className="w-4 h-4 text-amber-600 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="password"
-              required
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder="Enter current password"
-              className="w-full pl-10 pr-4 py-3 text-sm bg-amber-50/50 border border-amber-200 rounded-xl text-amber-950 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="block text-xs font-extrabold text-amber-950 uppercase tracking-wider">
-            New Password
-          </label>
-          <div className="relative">
-            <Lock className="w-4 h-4 text-amber-600 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="password"
-              required
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="Enter new password"
-              className="w-full pl-10 pr-4 py-3 text-sm bg-amber-50/50 border border-amber-200 rounded-xl text-amber-950 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="block text-xs font-extrabold text-amber-950 uppercase tracking-wider">
-            Confirm New Password
-          </label>
-          <div className="relative">
-            <Lock className="w-4 h-4 text-amber-600 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="password"
-              required
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Confirm new password"
-              className="w-full pl-10 pr-4 py-3 text-sm bg-amber-50/50 border border-amber-200 rounded-xl text-amber-950 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-        </div>
-
-        <div className="pt-3">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full bg-amber-600 hover:bg-amber-500 text-white font-extrabold text-sm py-3.5 rounded-2xl shadow-lg transition-all active:scale-[0.99]"
-          >
-            {isSubmitting ? 'Updating password...' : 'UPDATE PASSWORD'}
-          </button>
-        </div>
-      </form>
-
     </div>
   );
 }

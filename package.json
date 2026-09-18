@@ -9,19 +9,16 @@
     "lint": "next lint",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts",
-    "admin:set": "ts-node --project prisma/tsconfig.json prisma/set-admin.ts"
+    "seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts"
   },
   "prisma": {
     "seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.21.0",
-    "bcryptjs": "^2.4.3",
     "clsx": "^2.1.1",
     "firebase": "^12.19.0",
     "firebase-admin": "^14.4.0",
-    "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.453.0",
     "next": "^14.2.15",
     "qrcode": "^1.5.4",
@@ -31,8 +28,6 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^20.17.0",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^18.3.12",

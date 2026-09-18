@@ -1,8 +1,8 @@
 import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
 import { getAdminAuth, getAdminDb, isFirebaseAdminConfigured } from '@/lib/firebase/admin';
 
 export const SESSION_COOKIE = 'admin_session';
+/** Cookie left over from the retired password login; only ever cleared now. */
 export const LEGACY_COOKIE = 'admin_token';
 
 /** 'pending' users are signed in but approved for nothing. */
@@ -15,16 +15,9 @@ export type SessionUser = {
   photoURL: string | null;
   role: Role;
   disabled: boolean;
-  provider: 'firebase' | 'legacy';
 };
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dumerso-cafe-secret-key-2026';
 const USERS_COLLECTION = 'users';
-
-/** Password login stays usable until Firebase is verified, then flip this off. */
-export function legacyLoginEnabled(): boolean {
-  return process.env.ALLOW_LEGACY_ADMIN_LOGIN !== 'false';
-}
 
 export function bootstrapAdminEmails(): string[] {
   return (process.env.FIREBASE_BOOTSTRAP_ADMIN_EMAILS || '')
@@ -97,57 +90,33 @@ export async function syncRoleClaim(uid: string, role: Role): Promise<void> {
   await getAdminAuth().setCustomUserClaims(uid, { role });
 }
 
-/** Resolves the caller from the session cookie, or null when signed out. */
+/** Resolves the caller from the Firebase session cookie, or null when signed out. */
 export async function getSessionUser(): Promise<SessionUser | null> {
-  const store = cookies();
-  const sessionCookie = store.get(SESSION_COOKIE)?.value;
+  const sessionCookie = cookies().get(SESSION_COOKIE)?.value;
 
-  if (sessionCookie && isFirebaseAdminConfigured()) {
-    try {
-      // checkRevoked: a disabled or signed-out account loses access immediately.
-      const decoded = await getAdminAuth().verifySessionCookie(sessionCookie, true);
-      const profile = await getOrCreateUserProfile({
-        uid: decoded.uid,
-        email: decoded.email ?? null,
-        displayName: (decoded.name as string) ?? null,
-        photoURL: (decoded.picture as string) ?? null,
-      });
+  if (!sessionCookie || !isFirebaseAdminConfigured()) return null;
 
-      return {
-        uid: decoded.uid,
-        email: decoded.email ?? null,
-        displayName: (decoded.name as string) ?? null,
-        photoURL: (decoded.picture as string) ?? null,
-        role: profile.role,
-        disabled: profile.disabled,
-        provider: 'firebase',
-      };
-    } catch {
-      // Fall through to the legacy check below.
-    }
+  try {
+    // checkRevoked: a disabled or signed-out account loses access immediately.
+    const decoded = await getAdminAuth().verifySessionCookie(sessionCookie, true);
+    const profile = await getOrCreateUserProfile({
+      uid: decoded.uid,
+      email: decoded.email ?? null,
+      displayName: (decoded.name as string) ?? null,
+      photoURL: (decoded.picture as string) ?? null,
+    });
+
+    return {
+      uid: decoded.uid,
+      email: decoded.email ?? null,
+      displayName: (decoded.name as string) ?? null,
+      photoURL: (decoded.picture as string) ?? null,
+      role: profile.role,
+      disabled: profile.disabled,
+    };
+  } catch {
+    return null;
   }
-
-  if (legacyLoginEnabled()) {
-    const legacyToken = store.get(LEGACY_COOKIE)?.value;
-    if (legacyToken) {
-      try {
-        const decoded = jwt.verify(legacyToken, JWT_SECRET) as { id: string; username: string };
-        return {
-          uid: decoded.id,
-          email: null,
-          displayName: decoded.username,
-          photoURL: null,
-          role: 'admin',
-          disabled: false,
-          provider: 'legacy',
-        };
-      } catch {
-        return null;
-      }
-    }
-  }
-
-  return null;
 }
 
 /** Caller must be an approved staff member or admin. */

@@ -1,5 +1,4 @@
 import { PrismaClient } from '@prisma/client';
-import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -30,22 +29,8 @@ async function main() {
     },
   });
 
-  // 2. Seed Admin User
-  // Credentials come from the environment when available so the repo never
-  // carries real ones. Change them any time with:
-  //   npm run admin:set -- --email=you@example.com --generate
-  const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-  const adminEmail = (process.env.ADMIN_EMAIL || 'admin@dumerso.local').toLowerCase();
-  const hashedPassword = await bcrypt.hash(process.env.ADMIN_PASSWORD || 'dumerso123', 12);
-  await prisma.adminUser.upsert({
-    where: { username: adminUsername },
-    update: { email: adminEmail, password: hashedPassword },
-    create: {
-      username: adminUsername,
-      email: adminEmail,
-      password: hashedPassword,
-    },
-  });
+  // 2. Admin accounts are not seeded: sign in with Google and the first email
+  //    listed in FIREBASE_BOOTSTRAP_ADMIN_EMAILS becomes an admin automatically.
 
   // 3. Seed Categories & Items matching reference image
   const categoriesData = [

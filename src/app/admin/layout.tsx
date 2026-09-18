@@ -31,12 +31,7 @@ type AuthUser = {
 };
 
 /** Sign-in and holding screens render without the dashboard shell. */
-const STANDALONE_PAGES = [
-  '/admin/login',
-  '/admin/signup',
-  '/admin/legacy-login',
-  '/admin/pending',
-];
+const STANDALONE_PAGES = ['/admin/login', '/admin/signup', '/admin/pending'];
 
 export default function AdminLayout({
   children,

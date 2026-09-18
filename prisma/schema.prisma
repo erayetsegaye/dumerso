@@ -50,16 +50,7 @@ model MenuItem {
   updatedAt   DateTime @updatedAt
 }
 
-model AdminUser {
-  id        String   @id @default(uuid())
-  username  String   @unique
-  // Stored lower-cased so sign-in is case-insensitive (SQLite has no
-  // case-insensitive filtering). Optional so existing rows keep working.
-  email     String?  @unique
-  password  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
+// Admin accounts live in Firebase Auth + Firestore (users/{uid}), not here.
 
 model ActivityLog {
   id        String   @id @default(uuid())

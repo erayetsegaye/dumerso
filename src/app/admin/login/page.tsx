@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Loader2, AlertTriangle, LockKeyhole } from 'lucide-react';
+import { Loader2, AlertTriangle } from 'lucide-react';
 import SafeImage from '@/components/SafeImage';
 import { describeAuthError, isFirebaseConfigured, signInWithGoogle } from '@/lib/firebase/client';
 
@@ -21,15 +21,7 @@ export default function AdminLoginPage() {
   const router = useRouter();
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [legacyEnabled, setLegacyEnabled] = useState(false);
   const configured = isFirebaseConfigured();
-
-  useEffect(() => {
-    fetch('/api/auth/config')
-      .then((res) => res.json())
-      .then((data) => setLegacyEnabled(Boolean(data.legacyLoginEnabled)))
-      .catch(() => setLegacyEnabled(false));
-  }, []);
 
   const handleGoogleLogin = async () => {
     setError('');
@@ -94,7 +86,7 @@ export default function AdminLoginPage() {
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
               Firebase is not configured yet. Add the <code>NEXT_PUBLIC_FIREBASE_*</code> values to{' '}
-              <code>.env</code>, or use the password login below.
+              <code>.env</code>.
             </span>
           </div>
         )}
@@ -132,18 +124,6 @@ export default function AdminLoginPage() {
             </Link>
           </p>
         </div>
-
-        {legacyEnabled && (
-          <div className="text-center pt-3 border-t border-[#4A2917]/60">
-            <Link
-              href="/admin/legacy-login"
-              className="inline-flex items-center gap-1.5 text-[11px] text-[#CDB99D] hover:text-[#F3E4CB] transition-colors"
-            >
-              <LockKeyhole className="w-3.5 h-3.5" />
-              Use the old password login
-            </Link>
-          </div>
-        )}
 
       </div>
     </div>
