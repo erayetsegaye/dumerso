@@ -1,19 +1,15 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { denyUnlessApproved } from '@/lib/api-auth';
+import { denyUnlessApproved, denyIfSupabaseDown } from '@/lib/api-auth';
+import { createCategory, listCategories } from '@/lib/db';
 
-// GET stays public: the customer menu needs it.
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
-    const categories = await prisma.category.findMany({
-      orderBy: { order: 'asc' },
-      include: {
-        _count: {
-          select: { items: true },
-        },
-      },
-    });
+    const down = denyIfSupabaseDown();
+    if (down) return down;
 
+    const categories = await listCategories();
     return NextResponse.json(categories);
   } catch (error) {
     console.error('API Categories GET error:', error);
@@ -33,12 +29,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Category name is required' }, { status: 400 });
     }
 
-    const category = await prisma.category.create({
-      data: {
-        name: name.trim(),
-        icon: icon || '☕',
-        order: typeof order === 'number' ? order : 0,
-      },
+    const category = await createCategory({
+      name: name.trim(),
+      icon: icon || '☕',
+      order: typeof order === 'number' ? order : 0,
     });
 
     return NextResponse.json(category, { status: 201 });

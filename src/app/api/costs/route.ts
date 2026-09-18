@@ -1,23 +1,17 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
 import { denyUnlessAdmin, denyUnlessApproved } from '@/lib/api-auth';
+import {
+  addDays,
+  datesInRange,
+  daysInCalendarMonth,
+  ethiopiaDateString,
+} from '@/lib/dates';
+import { createActivity, createCost, listCosts, listOrders } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-function getLocalDateString(dateObj = new Date()) {
-  const year = dateObj.getFullYear();
-  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const day = String(dateObj.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function getDaysInMonth(year: number, monthZeroIndexed: number): number {
-  return new Date(year, monthZeroIndexed + 1, 0).getDate();
-}
-
 export async function GET(request: Request) {
   try {
-    // Readable by staff so the dashboard summary works; only admins can edit.
     const denied = await denyUnlessApproved();
     if (denied) return denied;
 
@@ -25,11 +19,10 @@ export async function GET(request: Request) {
     const period = searchParams.get('period') || 'today';
     const startDateParam = searchParams.get('startDate');
     const endDateParam = searchParams.get('endDate');
-    const targetDateParam = searchParams.get('date'); // YYYY-MM-DD for single day breakdown
-    const targetMonthParam = searchParams.get('month'); // YYYY-MM for monthly breakdown
+    const targetDateParam = searchParams.get('date');
+    const targetMonthParam = searchParams.get('month');
 
-    const now = new Date();
-    const todayStr = getLocalDateString(now);
+    const todayStr = ethiopiaDateString();
 
     let startDateStr = todayStr;
     let endDateStr = todayStr;
@@ -38,36 +31,28 @@ export async function GET(request: Request) {
       startDateStr = targetDateParam;
       endDateStr = targetDateParam;
     } else if (targetMonthParam) {
-      // e.g. "2026-09"
       const [yStr, mStr] = targetMonthParam.split('-');
       const y = parseInt(yStr, 10);
       const m = parseInt(mStr, 10) - 1;
-      const daysCount = getDaysInMonth(y, m);
+      const daysCount = daysInCalendarMonth(y, m);
       startDateStr = `${yStr}-${mStr}-01`;
       endDateStr = `${yStr}-${mStr}-${String(daysCount).padStart(2, '0')}`;
     } else if (period === 'yesterday') {
-      const yesterday = new Date(now);
-      yesterday.setDate(now.getDate() - 1);
-      startDateStr = getLocalDateString(yesterday);
+      startDateStr = addDays(todayStr, -1);
       endDateStr = startDateStr;
     } else if (period === 'week') {
-      const weekAgo = new Date(now);
-      weekAgo.setDate(now.getDate() - 6);
-      startDateStr = getLocalDateString(weekAgo);
+      startDateStr = addDays(todayStr, -6);
       endDateStr = todayStr;
     } else if (period === 'month' || period === 'this_month') {
-      const y = now.getFullYear();
-      const m = now.getMonth();
-      const daysCount = getDaysInMonth(y, m);
-      const mStr = String(m + 1).padStart(2, '0');
+      const [y, mStr] = todayStr.split('-');
+      const m = parseInt(mStr, 10) - 1;
+      const daysCount = daysInCalendarMonth(parseInt(y, 10), m);
       startDateStr = `${y}-${mStr}-01`;
       endDateStr = `${y}-${mStr}-${String(daysCount).padStart(2, '0')}`;
     } else if (period === 'previous_month') {
-      const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const y = prev.getFullYear();
-      const m = prev.getMonth();
-      const daysCount = getDaysInMonth(y, m);
-      const mStr = String(m + 1).padStart(2, '0');
+      const prev = addDays(`${todayStr.slice(0, 7)}-01`, -1);
+      const [y, mStr] = prev.split('-');
+      const daysCount = daysInCalendarMonth(parseInt(y, 10), parseInt(mStr, 10) - 1);
       startDateStr = `${y}-${mStr}-01`;
       endDateStr = `${y}-${mStr}-${String(daysCount).padStart(2, '0')}`;
     } else if (period === 'custom' && startDateParam && endDateParam) {
@@ -75,31 +60,17 @@ export async function GET(request: Request) {
       endDateStr = endDateParam;
     }
 
-    // 1. Fetch all costs from DB
-    const allCosts = await prisma.cost.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-
+    const allCosts = await listCosts();
     const activeCosts = allCosts.filter((c) => c.active);
     const fixedCosts = activeCosts.filter((c) => c.costType === 'fixed_monthly');
     const percentageCosts = activeCosts.filter((c) => c.costType === 'sales_percentage');
 
-    // 2. Fetch completed orders in range
-    const orders = await prisma.order.findMany({
-      where: {
-        status: 'Completed',
-        orderDate: {
-          gte: startDateStr,
-          lte: endDateStr,
-        },
-      },
-      select: {
-        orderDate: true,
-        totalAmount: true,
-      },
+    const orders = await listOrders({
+      status: 'Completed',
+      startDate: startDateStr,
+      endDate: endDateStr,
     });
 
-    // Group daily sales
     const dailySalesMap: Record<string, number> = {};
     let totalSales = 0;
 
@@ -108,22 +79,9 @@ export async function GET(request: Request) {
       dailySalesMap[o.orderDate] = (dailySalesMap[o.orderDate] || 0) + o.totalAmount;
     }
 
-    // Build list of dates in the selected range
-    const startObj = new Date(startDateStr);
-    const endObj = new Date(endDateStr);
-    const datesList: string[] = [];
-    const curr = new Date(startObj);
-    while (curr <= endObj) {
-      datesList.push(getLocalDateString(curr));
-      curr.setDate(curr.getDate() + 1);
-    }
-
-    // 3. Compute Fixed Costs for period
-    // Determine days in reference month for fixed cost daily equivalent calculation
-    const refDateObj = new Date(startDateStr);
-    const refYear = refDateObj.getFullYear();
-    const refMonthZero = refDateObj.getMonth();
-    const daysInMonth = getDaysInMonth(refYear, refMonthZero);
+    const datesList = datesInRange(startDateStr, endDateStr);
+    const [refYearStr, refMonthStr] = startDateStr.split('-');
+    const daysInMonth = daysInCalendarMonth(parseInt(refYearStr, 10), parseInt(refMonthStr, 10) - 1);
     const numDaysInPeriod = datesList.length;
 
     let totalFixedCosts = 0;
@@ -133,7 +91,6 @@ export async function GET(request: Request) {
       let periodAmount = 0;
 
       if (numDaysInPeriod >= daysInMonth && startDateStr.endsWith('-01')) {
-        // Full month or more
         periodAmount = monthlyAmount;
       } else {
         periodAmount = parseFloat((dailyEquivalent * numDaysInPeriod).toFixed(2));
@@ -152,13 +109,11 @@ export async function GET(request: Request) {
       };
     });
 
-    // 4. Compute Percentage Costs for period (calculated using daily sales)
     let totalPercentageCosts = 0;
     const percentageBreakdown = percentageCosts.map((pc) => {
       const pct = pc.percentage || 0;
       let calculatedAmount = 0;
 
-      // Sum of daily sales * pct / 100 for each day
       for (const d of datesList) {
         const dSales = dailySalesMap[d] || 0;
         calculatedAmount += (dSales * pct) / 100;
@@ -176,18 +131,15 @@ export async function GET(request: Request) {
       };
     });
 
-    // 5. Total Calculations
     totalFixedCosts = parseFloat(totalFixedCosts.toFixed(2));
     totalPercentageCosts = parseFloat(totalPercentageCosts.toFixed(2));
     const totalCosts = parseFloat((totalFixedCosts + totalPercentageCosts).toFixed(2));
     const estimatedRemaining = parseFloat((totalSales - totalCosts).toFixed(2));
     const costPercentage = totalSales > 0 ? parseFloat(((totalCosts / totalSales) * 100).toFixed(2)) : 0;
 
-    // 6. Daily Breakdown for selected period
     const dailyBreakdown = datesList.map((d) => {
       const dSales = dailySalesMap[d] || 0;
-      
-      // Daily fixed costs
+
       let dFixedCosts = 0;
       const dFixedItems = fixedCosts.map((fc) => {
         const dailyEq = parseFloat(((fc.amount || 0) / daysInMonth).toFixed(2));
@@ -196,7 +148,6 @@ export async function GET(request: Request) {
       });
       dFixedCosts = parseFloat(dFixedCosts.toFixed(2));
 
-      // Daily percentage costs
       let dPctCosts = 0;
       const dPctItems = percentageCosts.map((pc) => {
         const amt = parseFloat(((dSales * (pc.percentage || 0)) / 100).toFixed(2));
@@ -273,23 +224,19 @@ export async function POST(request: Request) {
       }
     }
 
-    const newCost = await prisma.cost.create({
-      data: {
-        name: name.trim(),
-        description: description ? description.trim() : null,
-        costType,
-        amount: parsedAmount,
-        percentage: parsedPercentage,
-        active: active !== undefined ? Boolean(active) : true,
-      },
+    const newCost = await createCost({
+      name: name.trim(),
+      description: description ? description.trim() : null,
+      costType,
+      amount: parsedAmount,
+      percentage: parsedPercentage,
+      active: active !== undefined ? Boolean(active) : true,
     });
 
-    await prisma.activityLog.create({
-      data: {
-        action: `Added Cost "${newCost.name}"`,
-        details: `${costType === 'fixed_monthly' ? `${newCost.amount} ETB/month` : `${newCost.percentage}% of sales`}`,
-        type: 'create',
-      },
+    await createActivity({
+      action: `Added Cost "${newCost.name}"`,
+      details: `${costType === 'fixed_monthly' ? `${newCost.amount} ETB/month` : `${newCost.percentage}% of sales`}`,
+      type: 'create',
     });
 
     return NextResponse.json(newCost, { status: 201 });

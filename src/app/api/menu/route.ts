@@ -1,43 +1,20 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { denyUnlessApproved } from '@/lib/api-auth';
+import { denyUnlessApproved, denyIfSupabaseDown } from '@/lib/api-auth';
+import { createActivity, createMenuItem, listMenuItems } from '@/lib/db';
 
-// GET stays public: the customer menu needs it.
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: Request) {
   try {
+    const down = denyIfSupabaseDown();
+    if (down) return down;
+
     const { searchParams } = new URL(request.url);
     const categoryId = searchParams.get('categoryId');
     const search = searchParams.get('search');
     const availableOnly = searchParams.get('availableOnly') === 'true';
 
-    const where: any = {};
-
-    if (categoryId && categoryId !== 'all') {
-      where.categoryId = categoryId;
-    }
-
-    if (availableOnly) {
-      where.isAvailable = true;
-    }
-
-    if (search && search.trim()) {
-      where.OR = [
-        { name: { contains: search.trim() } },
-        { description: { contains: search.trim() } },
-      ];
-    }
-
-    const items = await prisma.menuItem.findMany({
-      where,
-      include: {
-        category: true,
-      },
-      orderBy: [
-        { order: 'asc' },
-        { createdAt: 'desc' },
-      ],
-    });
-
+    const items = await listMenuItems({ categoryId, search, availableOnly });
     return NextResponse.json(items);
   } catch (error) {
     console.error('API Menu GET error:', error);
@@ -75,29 +52,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Valid price is required' }, { status: 400 });
     }
 
-    const item = await prisma.menuItem.create({
-      data: {
-        name: name.trim(),
-        categoryId,
-        price: parsedPrice,
-        description: description ? description.trim() : null,
-        imageUrl: imageUrl || null,
-        isAvailable: Boolean(isAvailable),
-        isSpecial: Boolean(isSpecial),
-        isPopular: Boolean(isPopular),
-      },
-      include: {
-        category: true,
-      },
+    const item = await createMenuItem({
+      name: name.trim(),
+      categoryId,
+      price: parsedPrice,
+      description: description ? description.trim() : null,
+      imageUrl: imageUrl || null,
+      isAvailable: Boolean(isAvailable),
+      isSpecial: Boolean(isSpecial),
+      isPopular: Boolean(isPopular),
     });
 
-    // Log Activity
-    await prisma.activityLog.create({
-      data: {
-        action: `Added new item: ${item.name}`,
-        details: `Added to ${item.category?.name || 'menu'}`,
-        type: 'add',
-      },
+    await createActivity({
+      action: `Added new item: ${item.name}`,
+      details: `Added to ${item.category?.name || 'menu'}`,
+      type: 'add',
     });
 
     return NextResponse.json(item, { status: 201 });

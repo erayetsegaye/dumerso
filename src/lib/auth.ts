@@ -1,11 +1,15 @@
-import { cookies } from 'next/headers';
-import { getAdminAuth, getAdminDb, isFirebaseAdminConfigured } from '@/lib/firebase/admin';
+import { createUserServerClient } from '@/lib/supabase/server';
+import { getAdminClient, isSupabaseAdminConfigured } from '@/lib/supabase/admin';
+import {
+  countActiveAdmins,
+  getProfile,
+  insertProfile,
+  updateProfile,
+} from '@/lib/db';
 
-export const SESSION_COOKIE = 'admin_session';
-/** Cookie left over from the retired password login; only ever cleared now. */
+export const INVITE_COOKIE = 'signup_invite';
 export const LEGACY_COOKIE = 'admin_token';
 
-/** 'pending' users are signed in but approved for nothing. */
 export type Role = 'pending' | 'staff' | 'admin';
 
 export type SessionUser = {
@@ -17,10 +21,8 @@ export type SessionUser = {
   disabled: boolean;
 };
 
-const USERS_COLLECTION = 'users';
-
 export function bootstrapAdminEmails(): string[] {
-  return (process.env.FIREBASE_BOOTSTRAP_ADMIN_EMAILS || '')
+  return (process.env.BOOTSTRAP_ADMIN_EMAILS || '')
     .split(',')
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
@@ -31,10 +33,19 @@ export function isBootstrapAdmin(email: string | null | undefined): boolean {
   return bootstrapAdminEmails().includes(email.toLowerCase());
 }
 
+export function inviteCodeRequired(): boolean {
+  return Boolean(process.env.SIGNUP_INVITE_CODE);
+}
+
+export function inviteCodeMatches(supplied: unknown): boolean {
+  const expected = process.env.SIGNUP_INVITE_CODE;
+  if (!expected) return true;
+  return typeof supplied === 'string' && supplied.trim() === expected;
+}
+
 /**
- * Reads the Firestore profile for a Firebase user, creating it on first sign-in.
- * Emails listed in FIREBASE_BOOTSTRAP_ADMIN_EMAILS are promoted automatically so
- * the first real admin can get in without a chicken-and-egg problem.
+ * Reads the profiles row for a signed-in user, creating it on first sign-in.
+ * Emails in BOOTSTRAP_ADMIN_EMAILS are promoted automatically.
  */
 export async function getOrCreateUserProfile(user: {
   uid: string;
@@ -42,75 +53,70 @@ export async function getOrCreateUserProfile(user: {
   displayName?: string | null;
   photoURL?: string | null;
 }): Promise<{ role: Role; disabled: boolean; created: boolean }> {
-  const db = getAdminDb();
-  const ref = db.collection(USERS_COLLECTION).doc(user.uid);
-  const snapshot = await ref.get();
+  const existing = await getProfile(user.uid);
   const shouldBootstrap = isBootstrapAdmin(user.email);
 
-  if (!snapshot.exists) {
+  if (!existing) {
     const role: Role = shouldBootstrap ? 'admin' : 'pending';
-    await ref.set({
+    await insertProfile({
+      id: user.uid,
       email: user.email?.toLowerCase() ?? null,
       displayName: user.displayName ?? null,
       photoURL: user.photoURL ?? null,
       role,
       disabled: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
     });
-    await syncRoleClaim(user.uid, role);
     return { role, disabled: false, created: true };
   }
 
-  const data = snapshot.data() || {};
-  let role = (data.role as Role) || 'pending';
-
-  // Keep profile fields fresh, and honour a newly added bootstrap email.
-  const updates: Record<string, unknown> = {
-    email: user.email?.toLowerCase() ?? data.email ?? null,
-    displayName: user.displayName ?? data.displayName ?? null,
-    photoURL: user.photoURL ?? data.photoURL ?? null,
+  let role = (existing.role as Role) || 'pending';
+  const updates: {
+    email: string | null;
+    displayName: string | null;
+    photoURL: string | null;
+    lastSeenAt: string;
+    role?: Role;
+  } = {
+    email: user.email?.toLowerCase() ?? existing.email ?? null,
+    displayName: user.displayName ?? existing.displayName ?? null,
+    photoURL: user.photoURL ?? existing.photoURL ?? null,
     lastSeenAt: new Date().toISOString(),
   };
 
   if (shouldBootstrap && role !== 'admin') {
     role = 'admin';
     updates.role = 'admin';
-    updates.updatedAt = new Date().toISOString();
-    await syncRoleClaim(user.uid, 'admin');
   }
 
-  await ref.set(updates, { merge: true });
-
-  return { role, disabled: Boolean(data.disabled), created: false };
+  await updateProfile(user.uid, updates);
+  return { role, disabled: existing.disabled, created: false };
 }
 
-/** Mirrors the role into a custom claim so it travels with the token. */
-export async function syncRoleClaim(uid: string, role: Role): Promise<void> {
-  await getAdminAuth().setCustomUserClaims(uid, { role });
-}
-
-/** Resolves the caller from the Firebase session cookie, or null when signed out. */
 export async function getSessionUser(): Promise<SessionUser | null> {
-  const sessionCookie = cookies().get(SESSION_COOKIE)?.value;
+  if (!isSupabaseAdminConfigured()) return null;
 
-  if (!sessionCookie || !isFirebaseAdminConfigured()) return null;
+  const supabase = createUserServerClient();
+  if (!supabase) return null;
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return null;
 
   try {
-    // checkRevoked: a disabled or signed-out account loses access immediately.
-    const decoded = await getAdminAuth().verifySessionCookie(sessionCookie, true);
     const profile = await getOrCreateUserProfile({
-      uid: decoded.uid,
-      email: decoded.email ?? null,
-      displayName: (decoded.name as string) ?? null,
-      photoURL: (decoded.picture as string) ?? null,
+      uid: user.id,
+      email: user.email ?? null,
+      displayName: user.user_metadata?.full_name || user.user_metadata?.name || null,
+      photoURL: user.user_metadata?.avatar_url || user.user_metadata?.picture || null,
     });
 
     return {
-      uid: decoded.uid,
-      email: decoded.email ?? null,
-      displayName: (decoded.name as string) ?? null,
-      photoURL: (decoded.picture as string) ?? null,
+      uid: user.id,
+      email: user.email ?? null,
+      displayName: user.user_metadata?.full_name || user.user_metadata?.name || null,
+      photoURL: user.user_metadata?.avatar_url || user.user_metadata?.picture || null,
       role: profile.role,
       disabled: profile.disabled,
     };
@@ -119,16 +125,29 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   }
 }
 
-/** Caller must be an approved staff member or admin. */
 export async function requireApproved(): Promise<SessionUser | null> {
   const user = await getSessionUser();
   if (!user || user.disabled || user.role === 'pending') return null;
   return user;
 }
 
-/** Caller must be an admin. */
 export async function requireAdmin(): Promise<SessionUser | null> {
   const user = await getSessionUser();
   if (!user || user.disabled || user.role !== 'admin') return null;
   return user;
+}
+
+export async function activeAdminCount(): Promise<number> {
+  return countActiveAdmins();
+}
+
+export async function signOutEverywhere(uid?: string): Promise<void> {
+  const supabase = createUserServerClient();
+  if (supabase) {
+    await supabase.auth.signOut();
+  }
+
+  if (uid && isSupabaseAdminConfigured()) {
+    await getAdminClient().auth.admin.signOut(uid, 'global').catch(() => undefined);
+  }
 }

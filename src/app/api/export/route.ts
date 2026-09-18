@@ -1,44 +1,38 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
 import { denyUnlessAdmin } from '@/lib/api-auth';
+import {
+  addDays,
+  addMonths,
+  datesInRange,
+  dayName,
+  daysInCalendarMonth,
+  ethiopiaDateString,
+  ethiopiaTime24,
+  monthName,
+  toEthiopiaDate,
+} from '@/lib/dates';
+import { listCategories, listCosts, listMenuItems, listOrders } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
 function getLocalDateString(dateObj: Date): string {
-  const year = dateObj.getFullYear();
-  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const day = String(dateObj.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return ethiopiaDateString(dateObj);
 }
 
 function getLocalTimeString(dateObj: Date): string {
-  const hours = String(dateObj.getHours()).padStart(2, '0');
-  const minutes = String(dateObj.getMinutes()).padStart(2, '0');
-  const seconds = String(dateObj.getSeconds()).padStart(2, '0');
-  return `${hours}:${minutes}:${seconds}`;
+  return ethiopiaTime24(dateObj);
 }
 
 function getDaysInMonth(year: number, monthZeroIndexed: number): number {
-  return new Date(year, monthZeroIndexed + 1, 0).getDate();
+  return daysInCalendarMonth(year, monthZeroIndexed);
 }
 
 function getDayName(dateStr: string): string {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const dateObj = new Date(y, m - 1, d);
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return days[dateObj.getDay()] || 'Unknown';
+  return dayName(dateStr);
 }
 
 function getMonthName(yearMonthStr: string): string {
-  const [yStr, mStr] = yearMonthStr.split('-');
-  const y = parseInt(yStr, 10);
-  const m = parseInt(mStr, 10) - 1;
-  const dateObj = new Date(y, m, 1);
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
-  return `${months[dateObj.getMonth()]} ${y}`;
+  return monthName(yearMonthStr);
 }
 
 export async function GET(request: Request) {
@@ -65,50 +59,31 @@ export async function GET(request: Request) {
     } else if (period === 'today') {
       startDateStr = endDateStr;
     } else if (period === 'yesterday') {
-      const yest = new Date(now);
-      yest.setDate(yest.getDate() - 1);
-      startDateStr = getLocalDateString(yest);
+      startDateStr = addDays(endDateStr, -1);
       endDateStr = startDateStr;
     } else if (period === 'week') {
-      const wk = new Date(now);
-      wk.setDate(wk.getDate() - 7);
-      startDateStr = getLocalDateString(wk);
+      startDateStr = addDays(endDateStr, -7);
     } else if (period === '3months') {
-      const m3 = new Date(now);
-      m3.setMonth(m3.getMonth() - 3);
-      startDateStr = getLocalDateString(m3);
+      startDateStr = addMonths(endDateStr, -3);
     } else if (period === '6months') {
-      const m6 = new Date(now);
-      m6.setMonth(m6.getMonth() - 6);
-      startDateStr = getLocalDateString(m6);
+      startDateStr = addMonths(endDateStr, -6);
     } else if (period === '1year') {
-      const y1 = new Date(now);
-      y1.setFullYear(y1.getFullYear() - 1);
-      startDateStr = getLocalDateString(y1);
+      startDateStr = addMonths(endDateStr, -12);
     } else {
-      // default 30 days
-      const m1 = new Date(now);
-      m1.setDate(m1.getDate() - 30);
-      startDateStr = getLocalDateString(m1);
+      startDateStr = addDays(endDateStr, -30);
     }
 
-    // Fetch database records
-    const [menuItems, categories, orders, allCosts] = await Promise.all([
-      prisma.menuItem.findMany({ include: { category: true }, orderBy: { name: 'asc' } }),
-      prisma.category.findMany({ orderBy: { name: 'asc' } }),
-      prisma.order.findMany({
-        where: {
-          status: 'Completed',
-          orderDate: {
-            gte: startDateStr,
-            lte: endDateStr,
-          },
-        },
-        include: { items: true },
-        orderBy: [{ orderDate: 'desc' }, { createdAt: 'desc' }],
+    const [menuItemsRaw, categories, orders, allCosts] = await Promise.all([
+      listMenuItems({}),
+      listCategories(),
+      listOrders({
+        status: 'Completed',
+        startDate: startDateStr,
+        endDate: endDateStr,
       }),
-      prisma.cost.findMany({ orderBy: { createdAt: 'desc' } }),
+      listCosts(),
     ]);
+    const menuItems = [...menuItemsRaw].sort((a, b) => a.name.localeCompare(b.name));
 
     // Validation 1: Calculation Validation (Requirement 22)
     let sumOrdersTotal = 0;
@@ -153,8 +128,8 @@ export async function GET(request: Request) {
         defaultPrice: mi.price,
         isAvailable: mi.isAvailable,
         isDeleted: false,
-        createdAt: getLocalDateString(new Date(mi.createdAt)),
-        updatedAt: getLocalDateString(new Date(mi.updatedAt)),
+        createdAt: toEthiopiaDate(mi.createdAt),
+        updatedAt: toEthiopiaDate(mi.updatedAt),
       };
     }
 
@@ -178,14 +153,7 @@ export async function GET(request: Request) {
     const allMasterItems = Object.values(masterItemsMap).sort((a, b) => a.name.localeCompare(b.name));
 
     // Dates list in range (Ascending order for daily breakdown)
-    const datesListAsc: string[] = [];
-    const startObj = new Date(startDateStr);
-    const endObj = new Date(endDateStr);
-    const curr = new Date(startObj);
-    while (curr <= endObj) {
-      datesListAsc.push(getLocalDateString(curr));
-      curr.setDate(curr.getDate() + 1);
-    }
+    const datesListAsc = datesInRange(startDateStr, endDateStr);
 
     // Aggregation Maps
     const dailySalesMap: Record<string, { ordersCount: number; itemsSold: number; totalSales: number }> = {};
@@ -714,7 +682,7 @@ export async function GET(request: Request) {
     const percentageCosts = activeCosts.filter((c) => c.costType === 'sales_percentage');
 
     const costsAndExpensesRows = allCosts.map((c) => ({
-      'Date': getLocalDateString(new Date(c.createdAt)),
+      'Date': toEthiopiaDate(c.createdAt),
       'Cost Name': c.name,
       'Description': c.description || 'N/A',
       'Cost Type': c.costType === 'fixed_monthly' ? 'Fixed Monthly' : 'Sales Percentage',

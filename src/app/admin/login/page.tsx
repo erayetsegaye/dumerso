@@ -1,54 +1,41 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import SafeImage from '@/components/SafeImage';
-import { describeAuthError, isFirebaseConfigured, signInWithGoogle } from '@/lib/firebase/client';
+import { describeAuthError, isSupabaseConfigured, signInWithGoogle } from '@/lib/supabase/client';
 
-/** Only allow redirects back into the admin area (blocks open-redirects). */
-function safeRedirectTarget(): string {
-  if (typeof window === 'undefined') return '/admin';
-  const from = new URLSearchParams(window.location.search).get('from');
-  if (from && from.startsWith('/admin') && !from.startsWith('/admin/login')) {
-    return from;
+function loginErrorFromQuery(): string {
+  if (typeof window === 'undefined') return '';
+  const code = new URLSearchParams(window.location.search).get('error');
+  switch (code) {
+    case 'invite':
+      return 'That invite code is not valid. Ask the cafe owner for the current code.';
+    case 'closed':
+      return 'Sign-ups are closed right now.';
+    case 'disabled':
+      return 'This account has been disabled by an administrator.';
+    case 'config':
+      return 'Supabase is not configured on the server yet.';
+    case 'auth':
+      return 'Google sign-in failed. Please try again.';
+    default:
+      return '';
   }
-  return '/admin';
 }
 
 export default function AdminLoginPage() {
-  const router = useRouter();
-  const [error, setError] = useState('');
+  const [error, setError] = useState(loginErrorFromQuery);
   const [isLoading, setIsLoading] = useState(false);
-  const configured = isFirebaseConfigured();
+  const configured = useMemo(() => isSupabaseConfigured(), []);
 
   const handleGoogleLogin = async () => {
     setError('');
     setIsLoading(true);
 
     try {
-      const { idToken } = await signInWithGoogle();
-
-      const res = await fetch('/api/auth/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        const { getFirebaseAuth } = await import('@/lib/firebase/client');
-        await getFirebaseAuth().signOut().catch(() => undefined);
-        setError(data.error || 'You do not have access to this dashboard.');
-        setIsLoading(false);
-        return;
-      }
-
-      const role = data.user?.role;
-      router.replace(role === 'admin' || role === 'staff' ? safeRedirectTarget() : '/admin/pending');
-      router.refresh();
+      await signInWithGoogle();
     } catch (err) {
       setError(describeAuthError(err));
       setIsLoading(false);
@@ -58,13 +45,11 @@ export default function AdminLoginPage() {
   return (
     <div className="min-h-screen bg-[#1A0D07] text-[#F3E4CB] flex flex-col justify-center items-center p-4 relative overflow-hidden font-sans selection:bg-[#8B5A2B] selection:text-white">
 
-      {/* Warm Ambient Glow */}
       <div className="absolute -top-40 -left-40 w-96 h-96 bg-[#8B5A2B]/15 rounded-full blur-3xl" />
       <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-[#4A2917]/25 rounded-full blur-3xl" />
 
       <div className="w-full max-w-md bg-[#24140C] rounded-3xl p-6 sm:p-8 shadow-2xl border border-[#4A2917] relative z-10 space-y-6">
 
-        {/* Brand Header */}
         <div className="text-center space-y-3">
           <div className="w-20 h-20 rounded-full border-2 border-[#8B5A2B] overflow-hidden mx-auto shadow-xl bg-[#1A0D07] p-0.5">
             <SafeImage
@@ -85,7 +70,7 @@ export default function AdminLoginPage() {
           <div className="bg-amber-950/70 border border-amber-800 text-amber-100 text-xs p-3 rounded-xl font-semibold flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
-              Firebase is not configured yet. Add the <code>NEXT_PUBLIC_FIREBASE_*</code> values to{' '}
+              Supabase is not configured yet. Add the <code>NEXT_PUBLIC_SUPABASE_*</code> values to{' '}
               <code>.env</code>.
             </span>
           </div>
@@ -130,7 +115,6 @@ export default function AdminLoginPage() {
   );
 }
 
-/** Google's 'G' mark. */
 function GoogleMark() {
   return (
     <svg className="w-4 h-4" viewBox="0 0 48 48" aria-hidden="true">

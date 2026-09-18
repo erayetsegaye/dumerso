@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
 import { denyUnlessApproved } from '@/lib/api-auth';
+import { createActivity, deleteOrder, getOrder } from '@/lib/db';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(
   request: Request,
@@ -10,10 +12,7 @@ export async function GET(
     const denied = await denyUnlessApproved();
     if (denied) return denied;
 
-    const order = await prisma.order.findUnique({
-      where: { id: params.id },
-      include: { items: true },
-    });
+    const order = await getOrder(params.id);
 
     if (!order) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
@@ -34,25 +33,18 @@ export async function DELETE(
     const denied = await denyUnlessApproved();
     if (denied) return denied;
 
-    const order = await prisma.order.findUnique({
-      where: { id: params.id },
-    });
+    const order = await getOrder(params.id);
 
     if (!order) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
-    await prisma.order.delete({
-      where: { id: params.id },
-    });
+    await deleteOrder(params.id);
 
-    // Log Activity
-    await prisma.activityLog.create({
-      data: {
-        action: `Voided/Deleted Order ${order.orderNumber}`,
-        details: `Amount: ${order.totalAmount} ETB`,
-        type: 'delete',
-      },
+    await createActivity({
+      action: `Voided/Deleted Order ${order.orderNumber}`,
+      details: `Amount: ${order.totalAmount} ETB`,
+      type: 'delete',
     });
 
     return NextResponse.json({ message: 'Order voided/deleted successfully' });

@@ -48,8 +48,8 @@ export default function AdminPendingPage() {
   const handleSignOut = async () => {
     await fetch('/api/auth/session', { method: 'DELETE' });
     try {
-      const { getFirebaseAuth, isFirebaseConfigured } = await import('@/lib/firebase/client');
-      if (isFirebaseConfigured()) await getFirebaseAuth().signOut();
+      const { signOutBrowser } = await import('@/lib/supabase/client');
+      await signOutBrowser();
     } catch {
       // Client SDK may not be configured; the server cookie is already gone.
     }

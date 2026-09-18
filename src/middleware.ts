@@ -1,38 +1,44 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { updateSession } from '@/lib/supabase/middleware';
 
 /**
  * Gate-keeps the whole admin area.
  *
- * Middleware runs on the Edge runtime, where firebase-admin cannot verify a
- * session, so this only checks that a session cookie exists (cheap + fast).
- * Real verification and the role check happen in `/api/auth/me`, which the
- * admin layout calls on every page load.
+ * Middleware only checks that a Supabase session exists. Real verification
+ * and the role check happen in `/api/auth/me`, which the admin layout calls
+ * on every page load.
  */
 const PUBLIC_ADMIN_PATHS = ['/admin/login', '/admin/signup'];
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  const hasSession = Boolean(request.cookies.get('admin_session')?.value);
-
+  const { userId, response } = await updateSession(request);
+  const hasSession = Boolean(userId);
   const isPublicPath = PUBLIC_ADMIN_PATHS.includes(pathname);
 
-  // Already signed in? Skip the sign-in screens.
   if (isPublicPath) {
     if (hasSession) {
-      return NextResponse.redirect(new URL('/admin', request.url));
+      const redirect = NextResponse.redirect(new URL('/admin', request.url));
+      response.cookies.getAll().forEach((cookie) => {
+        redirect.cookies.set(cookie.name, cookie.value);
+      });
+      return redirect;
     }
-    return NextResponse.next();
+    return response;
   }
 
-  // Any other /admin page requires a session.
   if (!hasSession) {
     const loginUrl = new URL('/admin/login', request.url);
     loginUrl.searchParams.set('from', `${pathname}${search}`);
-    return NextResponse.redirect(loginUrl);
+    const redirect = NextResponse.redirect(loginUrl);
+    response.cookies.getAll().forEach((cookie) => {
+      redirect.cookies.set(cookie.name, cookie.value);
+    });
+    return redirect;
   }
 
-  return NextResponse.next();
+  return response;
 }
 
 export const config = {

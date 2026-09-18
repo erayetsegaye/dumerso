@@ -120,12 +120,12 @@ export default function AdminLayout({
   ];
 
   const handleLogout = async () => {
-    // Clears the Firebase session cookie and the legacy cookie server-side.
+    // Clears the Supabase session cookie and the legacy cookie server-side.
     await fetch('/api/auth/session', { method: 'DELETE' });
 
     try {
-      const { getFirebaseAuth, isFirebaseConfigured } = await import('@/lib/firebase/client');
-      if (isFirebaseConfigured()) await getFirebaseAuth().signOut();
+      const { signOutBrowser } = await import('@/lib/supabase/client');
+      await signOutBrowser();
     } catch {
       // Client SDK not configured - the server cookie is already cleared.
     }

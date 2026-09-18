@@ -1,17 +1,18 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { denyUnlessApproved } from '@/lib/api-auth';
+import { denyUnlessApproved, denyIfSupabaseDown } from '@/lib/api-auth';
+import { createActivity, deleteMenuItem, getMenuItem, updateMenuItem } from '@/lib/db';
 
-// GET stays public: the customer menu needs it.
+export const dynamic = 'force-dynamic';
+
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const item = await prisma.menuItem.findUnique({
-      where: { id: params.id },
-      include: { category: true },
-    });
+    const down = denyIfSupabaseDown();
+    if (down) return down;
+
+    const item = await getMenuItem(params.id);
 
     if (!item) {
       return NextResponse.json({ error: 'Menu item not found' }, { status: 404 });
@@ -33,8 +34,17 @@ export async function PUT(
     if (denied) return denied;
 
     const body = await request.json();
-    
-    const updateData: any = {};
+
+    const updateData: {
+      name?: string;
+      categoryId?: string;
+      price?: number;
+      description?: string | null;
+      imageUrl?: string | null;
+      isAvailable?: boolean;
+      isSpecial?: boolean;
+      isPopular?: boolean;
+    } = {};
     if (body.name !== undefined) updateData.name = body.name.trim();
     if (body.categoryId !== undefined) updateData.categoryId = body.categoryId;
     if (body.price !== undefined) updateData.price = parseFloat(body.price);
@@ -44,28 +54,19 @@ export async function PUT(
     if (body.isSpecial !== undefined) updateData.isSpecial = Boolean(body.isSpecial);
     if (body.isPopular !== undefined) updateData.isPopular = Boolean(body.isPopular);
 
-    const item = await prisma.menuItem.update({
-      where: { id: params.id },
-      data: updateData,
-      include: { category: true },
-    });
+    const item = await updateMenuItem(params.id, updateData);
 
-    // Log Activity
     if (body.isAvailable !== undefined && Object.keys(body).length === 1) {
-      await prisma.activityLog.create({
-        data: {
-          action: `Changed availability: ${item.name}`,
-          details: `Marked as ${item.isAvailable ? 'Available' : 'Unavailable'}`,
-          type: 'status',
-        },
+      await createActivity({
+        action: `Changed availability: ${item.name}`,
+        details: `Marked as ${item.isAvailable ? 'Available' : 'Unavailable'}`,
+        type: 'status',
       });
     } else {
-      await prisma.activityLog.create({
-        data: {
-          action: `Updated item: ${item.name}`,
-          details: `Updated details / price (${item.price} ETB)`,
-          type: 'update',
-        },
+      await createActivity({
+        action: `Updated item: ${item.name}`,
+        details: `Updated details / price (${item.price} ETB)`,
+        type: 'update',
       });
     }
 
@@ -84,21 +85,14 @@ export async function DELETE(
     const denied = await denyUnlessApproved();
     if (denied) return denied;
 
-    const item = await prisma.menuItem.findUnique({
-      where: { id: params.id },
-    });
+    const item = await getMenuItem(params.id);
 
     if (item) {
-      await prisma.menuItem.delete({
-        where: { id: params.id },
-      });
-
-      await prisma.activityLog.create({
-        data: {
-          action: `Deleted item: ${item.name}`,
-          details: `Removed from menu`,
-          type: 'delete',
-        },
+      await deleteMenuItem(params.id);
+      await createActivity({
+        action: `Deleted item: ${item.name}`,
+        details: 'Removed from menu',
+        type: 'delete',
       });
     }
 

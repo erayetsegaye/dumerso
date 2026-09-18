@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
 import { denyUnlessApproved } from '@/lib/api-auth';
+import { deleteCategory, updateCategory } from '@/lib/db';
+
+export const dynamic = 'force-dynamic';
 
 export async function PUT(
   request: Request,
@@ -13,15 +15,7 @@ export async function PUT(
     const body = await request.json();
     const { name, icon, order } = body;
 
-    const category = await prisma.category.update({
-      where: { id: params.id },
-      data: {
-        name,
-        icon,
-        order,
-      },
-    });
-
+    const category = await updateCategory(params.id, { name, icon, order });
     return NextResponse.json(category);
   } catch (error) {
     console.error('API Category PUT error:', error);
@@ -37,10 +31,7 @@ export async function DELETE(
     const denied = await denyUnlessApproved();
     if (denied) return denied;
 
-    await prisma.category.delete({
-      where: { id: params.id },
-    });
-
+    await deleteCategory(params.id);
     return NextResponse.json({ message: 'Category deleted successfully' });
   } catch (error) {
     console.error('API Category DELETE error:', error);

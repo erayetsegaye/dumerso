@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isFirebaseAdminConfigured } from '@/lib/firebase/admin';
+import { isSupabaseAdminConfigured } from '@/lib/supabase/admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET() {
   return NextResponse.json({
-    firebaseReady: isFirebaseAdminConfigured(),
+    supabaseReady: isSupabaseAdminConfigured(),
     inviteRequired: Boolean(process.env.SIGNUP_INVITE_CODE),
   });
 }

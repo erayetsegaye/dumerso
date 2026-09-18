@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
 import { denyUnlessAdmin } from '@/lib/api-auth';
+import { createActivity, deleteCost, getCost, updateCost } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,9 +16,7 @@ export async function PUT(
     const body = await request.json();
     const { name, description, costType, amount, percentage, active } = body;
 
-    const existingCost = await prisma.cost.findUnique({
-      where: { id },
-    });
+    const existingCost = await getCost(id);
 
     if (!existingCost) {
       return NextResponse.json({ error: 'Cost not found' }, { status: 404 });
@@ -77,17 +75,12 @@ export async function PUT(
       updateData.active = Boolean(active);
     }
 
-    const updatedCost = await prisma.cost.update({
-      where: { id },
-      data: updateData,
-    });
+    const updatedCost = await updateCost(id, updateData);
 
-    await prisma.activityLog.create({
-      data: {
-        action: `Updated Cost "${updatedCost.name}"`,
-        details: `Updated parameters for ${updatedCost.costType}`,
-        type: 'update',
-      },
+    await createActivity({
+      action: `Updated Cost "${updatedCost.name}"`,
+      details: `Updated parameters for ${updatedCost.costType}`,
+      type: 'update',
     });
 
     return NextResponse.json(updatedCost);
@@ -106,25 +99,18 @@ export async function DELETE(
     if (denied) return denied;
 
     const { id } = params;
-
-    const existingCost = await prisma.cost.findUnique({
-      where: { id },
-    });
+    const existingCost = await getCost(id);
 
     if (!existingCost) {
       return NextResponse.json({ error: 'Cost not found' }, { status: 404 });
     }
 
-    await prisma.cost.delete({
-      where: { id },
-    });
+    await deleteCost(id);
 
-    await prisma.activityLog.create({
-      data: {
-        action: `Deleted Cost "${existingCost.name}"`,
-        details: `Removed ${existingCost.costType} cost`,
-        type: 'delete',
-      },
+    await createActivity({
+      action: `Deleted Cost "${existingCost.name}"`,
+      details: `Removed ${existingCost.costType} cost`,
+      type: 'delete',
     });
 
     return NextResponse.json({ success: true, message: 'Cost deleted successfully' });

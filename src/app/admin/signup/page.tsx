@@ -2,17 +2,15 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { KeyRound, ShieldCheck, Loader2, AlertTriangle } from 'lucide-react';
 import SafeImage from '@/components/SafeImage';
-import { describeAuthError, isFirebaseConfigured, signInWithGoogle } from '@/lib/firebase/client';
+import { describeAuthError, isSupabaseConfigured, signInWithGoogle } from '@/lib/supabase/client';
 
 export default function AdminSignupPage() {
-  const router = useRouter();
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const configured = isFirebaseConfigured();
+  const configured = isSupabaseConfigured();
 
   const handleGoogleSignup = async () => {
     setError('');
@@ -25,28 +23,19 @@ export default function AdminSignupPage() {
     setIsLoading(true);
 
     try {
-      const { idToken } = await signInWithGoogle();
-
-      const res = await fetch('/api/auth/session', {
+      const res = await fetch('/api/auth/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken, inviteCode: inviteCode.trim() }),
+        body: JSON.stringify({ inviteCode: inviteCode.trim() }),
       });
-
-      const data = await res.json();
-
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        // The server rejected us (bad invite code, disabled account): drop the
-        // client-side Firebase session too so nothing is left half signed-in.
-        const { getFirebaseAuth } = await import('@/lib/firebase/client');
-        await getFirebaseAuth().signOut().catch(() => undefined);
-        setError(data.error || 'Could not create your account.');
+        setError(data.error || 'Could not save the invite code.');
         setIsLoading(false);
         return;
       }
 
-      router.replace(data.user?.role === 'admin' || data.user?.role === 'staff' ? '/admin' : '/admin/pending');
-      router.refresh();
+      await signInWithGoogle();
     } catch (err) {
       setError(describeAuthError(err));
       setIsLoading(false);
@@ -83,7 +72,7 @@ export default function AdminSignupPage() {
           <div className="bg-amber-950/70 border border-amber-800 text-amber-100 text-xs p-3 rounded-xl font-semibold flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
-              Firebase is not configured yet. Add the <code>NEXT_PUBLIC_FIREBASE_*</code> values to{' '}
+              Supabase is not configured yet. Add the <code>NEXT_PUBLIC_SUPABASE_*</code> values to{' '}
               <code>.env</code> to enable sign-ups.
             </span>
           </div>

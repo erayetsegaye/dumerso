@@ -1,30 +1,12 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
 import { denyUnlessApproved } from '@/lib/api-auth';
+import { ethiopiaDateString, ethiopiaTime12 } from '@/lib/dates';
+import { countOrders, createActivity, createOrder, getMenuItem, listOrders } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-// Helper to get formatted local date (YYYY-MM-DD)
-function getLocalDateString(dateObj = new Date()) {
-  const year = dateObj.getFullYear();
-  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const day = String(dateObj.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-// Helper to get formatted local time (hh:mm AM/PM)
-function getLocalTimeString(dateObj = new Date()) {
-  let hours = dateObj.getHours();
-  const minutes = String(dateObj.getMinutes()).padStart(2, '0');
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12; // hour '0' should be '12'
-  return `${hours}:${minutes} ${ampm}`;
-}
-
 export async function GET(request: Request) {
   try {
-    // Sales data: never public.
     const denied = await denyUnlessApproved();
     if (denied) return denied;
 
@@ -33,25 +15,11 @@ export async function GET(request: Request) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
 
-    const where: any = { status: 'Completed' };
-
-    if (date) {
-      where.orderDate = date;
-    } else if (startDate && endDate) {
-      where.orderDate = {
-        gte: startDate,
-        lte: endDate,
-      };
-    }
-
-    const orders = await prisma.order.findMany({
-      where,
-      include: {
-        items: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
+    const orders = await listOrders({
+      status: 'Completed',
+      date,
+      startDate,
+      endDate,
     });
 
     return NextResponse.json(orders);
@@ -74,10 +42,9 @@ export async function POST(request: Request) {
     }
 
     const now = new Date();
-    const todayDateStr = getLocalDateString(now);
-    const todayTimeStr = getLocalTimeString(now);
+    const todayDateStr = ethiopiaDateString(now);
+    const todayTimeStr = ethiopiaTime12(now);
 
-    // Calculate total and prepare order item records with current DB prices & names
     let totalAmount = 0;
     const preparedItems = [];
 
@@ -91,13 +58,10 @@ export async function POST(request: Request) {
       let categoryName = itemInput.categoryName || 'General';
 
       if (menuItemId) {
-        const dbItem = await prisma.menuItem.findUnique({
-          where: { id: menuItemId },
-          include: { category: true },
-        });
+        const dbItem = await getMenuItem(menuItemId);
         if (dbItem) {
           menuItemName = dbItem.name;
-          unitPrice = dbItem.price; // ALWAYS use current price at order time
+          unitPrice = dbItem.price;
           categoryName = dbItem.category?.name || 'General';
         }
       }
@@ -121,37 +85,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No valid items in order' }, { status: 400 });
     }
 
-    // Generate unique sequential padded order number (e.g. #0001, #0002)
-    const count = await prisma.order.count();
+    const count = await countOrders();
     const nextNum = count + 1;
     const orderNumber = `#${String(nextNum).padStart(4, '0')}`;
 
-    // Create Order with nested items
-    const order = await prisma.order.create({
-      data: {
-        orderNumber,
-        orderDate: todayDateStr,
-        orderTime: todayTimeStr,
-        totalAmount,
-        paymentMethod,
-        status: 'Completed',
-        items: {
-          create: preparedItems,
-        },
-      },
-      include: {
-        items: true,
-      },
+    const order = await createOrder({
+      orderNumber,
+      orderDate: todayDateStr,
+      orderTime: todayTimeStr,
+      totalAmount,
+      paymentMethod,
+      status: 'Completed',
+      items: preparedItems,
     });
 
-    // Log Activity
     const itemSummary = preparedItems.map((i) => `${i.itemName} ×${i.quantity}`).join(', ');
-    await prisma.activityLog.create({
-      data: {
-        action: `Recorded Order ${order.orderNumber} (${order.totalAmount} ETB)`,
-        details: `${itemSummary} • ${paymentMethod}`,
-        type: 'add',
-      },
+    await createActivity({
+      action: `Recorded Order ${order.orderNumber} (${order.totalAmount} ETB)`,
+      details: `${itemSummary} • ${paymentMethod}`,
+      type: 'add',
     });
 
     return NextResponse.json(order, { status: 201 });

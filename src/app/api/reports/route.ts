@@ -1,19 +1,12 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
 import { denyUnlessAdmin, denyUnlessApproved } from '@/lib/api-auth';
+import { addDays, ethiopiaDateString } from '@/lib/dates';
+import { createActivity, getDailySummary, listOrders, upsertDailySummary } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-function getLocalDateString(dateObj = new Date()) {
-  const year = dateObj.getFullYear();
-  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const day = String(dateObj.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 export async function GET(request: Request) {
   try {
-    // Readable by staff (dashboard totals); closing the day is admin-only.
     const denied = await denyUnlessApproved();
     if (denied) return denied;
 
@@ -22,50 +15,31 @@ export async function GET(request: Request) {
     const startDateParam = searchParams.get('startDate');
     const endDateParam = searchParams.get('endDate');
 
-    const now = new Date();
-    const todayStr = getLocalDateString(now);
+    const todayStr = ethiopiaDateString();
 
     let startDateStr = todayStr;
     let endDateStr = todayStr;
 
     if (period === 'yesterday') {
-      const yesterday = new Date(now);
-      yesterday.setDate(now.getDate() - 1);
-      startDateStr = getLocalDateString(yesterday);
+      startDateStr = addDays(todayStr, -1);
       endDateStr = startDateStr;
     } else if (period === 'week') {
-      const weekAgo = new Date(now);
-      weekAgo.setDate(now.getDate() - 6);
-      startDateStr = getLocalDateString(weekAgo);
+      startDateStr = addDays(todayStr, -6);
       endDateStr = todayStr;
     } else if (period === 'month') {
-      const monthAgo = new Date(now);
-      monthAgo.setDate(now.getDate() - 29);
-      startDateStr = getLocalDateString(monthAgo);
+      startDateStr = addDays(todayStr, -29);
       endDateStr = todayStr;
     } else if (period === 'custom' && startDateParam && endDateParam) {
       startDateStr = startDateParam;
       endDateStr = endDateParam;
     }
 
-    // Fetch all completed orders in range
-    const orders = await prisma.order.findMany({
-      where: {
-        status: 'Completed',
-        orderDate: {
-          gte: startDateStr,
-          lte: endDateStr,
-        },
-      },
-      include: {
-        items: true,
-      },
-      orderBy: {
-        orderDate: 'desc',
-      },
+    const orders = await listOrders({
+      status: 'Completed',
+      startDate: startDateStr,
+      endDate: endDateStr,
     });
 
-    // 1. Core Summary Metrics
     let totalSales = 0;
     let itemsSold = 0;
     let cashSales = 0;
@@ -79,15 +53,13 @@ export async function GET(request: Request) {
 
     for (const order of orders) {
       totalSales += order.totalAmount;
-      
-      // Payment Breakdown
+
       const pm = order.paymentMethod?.toLowerCase() || 'cash';
       if (pm.includes('cash')) cashSales += order.totalAmount;
       else if (pm.includes('telebirr')) telebirrSales += order.totalAmount;
       else if (pm.includes('card')) cardSales += order.totalAmount;
       else otherSales += order.totalAmount;
 
-      // Daily Breakdown grouping
       if (!dailyMap[order.orderDate]) {
         dailyMap[order.orderDate] = {
           date: order.orderDate,
@@ -99,16 +71,13 @@ export async function GET(request: Request) {
       dailyMap[order.orderDate].orders += 1;
       dailyMap[order.orderDate].totalSales += order.totalAmount;
 
-      // Process Order Items
       for (const item of order.items) {
         itemsSold += item.quantity;
         dailyMap[order.orderDate].itemsSold += item.quantity;
 
-        // Category Breakdown
         const cat = item.categoryName || 'General';
         categoryMap[cat] = (categoryMap[cat] || 0) + item.subtotal;
 
-        // Best Selling Items
         if (!itemMap[item.itemName]) {
           itemMap[item.itemName] = { name: item.itemName, quantity: 0, sales: 0 };
         }
@@ -120,18 +89,15 @@ export async function GET(request: Request) {
     const totalOrders = orders.length;
     const averageOrder = totalOrders > 0 ? parseFloat((totalSales / totalOrders).toFixed(2)) : 0;
 
-    // Convert Category breakdown to array
     const categoryBreakdown = Object.entries(categoryMap).map(([category, amount]) => ({
       category,
       amount,
     }));
 
-    // Convert Best Selling Items to sorted array
     const bestSellingItems = Object.values(itemMap)
       .sort((a, b) => b.quantity - a.quantity)
       .slice(0, 10);
 
-    // Convert Daily Breakdown to sorted array
     const dailyBreakdown = Object.values(dailyMap)
       .map((d) => ({
         ...d,
@@ -139,10 +105,7 @@ export async function GET(request: Request) {
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
 
-    // Check if today is closed in DailySalesSummary
-    const closedSummary = await prisma.dailySalesSummary.findUnique({
-      where: { date: todayStr },
-    });
+    const closedSummary = await getDailySummary(todayStr);
 
     return NextResponse.json({
       period,
@@ -169,23 +132,16 @@ export async function GET(request: Request) {
   }
 }
 
-// POST endpoint for "Close Today's Sales"
 export async function POST() {
   try {
     const denied = await denyUnlessAdmin();
     if (denied) return denied;
 
-    const todayStr = getLocalDateString(new Date());
+    const todayStr = ethiopiaDateString();
 
-    // Fetch today's completed orders
-    const orders = await prisma.order.findMany({
-      where: {
-        status: 'Completed',
-        orderDate: todayStr,
-      },
-      include: {
-        items: true,
-      },
+    const orders = await listOrders({
+      status: 'Completed',
+      date: todayStr,
     });
 
     let totalSales = 0;
@@ -211,42 +167,23 @@ export async function POST() {
     const totalOrders = orders.length;
     const averageOrder = totalOrders > 0 ? parseFloat((totalSales / totalOrders).toFixed(2)) : 0;
 
-    // Upsert DailySalesSummary
-    const summary = await prisma.dailySalesSummary.upsert({
-      where: { date: todayStr },
-      update: {
-        totalSales,
-        totalOrders,
-        itemsSold,
-        averageOrder,
-        cashSales,
-        telebirrSales,
-        cardSales,
-        otherSales,
-        isClosed: true,
-        closedAt: new Date(),
-      },
-      create: {
-        date: todayStr,
-        totalSales,
-        totalOrders,
-        itemsSold,
-        averageOrder,
-        cashSales,
-        telebirrSales,
-        cardSales,
-        otherSales,
-        isClosed: true,
-      },
+    const summary = await upsertDailySummary({
+      date: todayStr,
+      totalSales,
+      totalOrders,
+      itemsSold,
+      averageOrder,
+      cashSales,
+      telebirrSales,
+      cardSales,
+      otherSales,
+      isClosed: true,
     });
 
-    // Log Activity
-    await prisma.activityLog.create({
-      data: {
-        action: `Closed Sales for ${todayStr}`,
-        details: `Total: ${totalSales} ETB (${totalOrders} orders, ${itemsSold} items)`,
-        type: 'status',
-      },
+    await createActivity({
+      action: `Closed Sales for ${todayStr}`,
+      details: `Total: ${totalSales} ETB (${totalOrders} orders, ${itemsSold} items)`,
+      type: 'status',
     });
 
     return NextResponse.json(summary);
