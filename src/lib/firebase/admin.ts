@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { App, cert, getApps, initializeApp } from 'firebase-admin/app';
+import { App, applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { Auth, getAuth } from 'firebase-admin/auth';
 import { Firestore, getFirestore } from 'firebase-admin/firestore';
 
@@ -11,10 +11,34 @@ type ServiceAccount = {
 };
 
 /**
+ * On Google infrastructure (App Hosting / Cloud Run) the runtime service
+ * account is available as Application Default Credentials, so no key file is
+ * needed - and shipping one would be worse security.
+ */
+function hasApplicationDefaultCredentials(): boolean {
+  return Boolean(
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      process.env.K_SERVICE || // Cloud Run / App Hosting
+      process.env.FUNCTION_TARGET ||
+      process.env.GOOGLE_CLOUD_PROJECT ||
+      process.env.GCLOUD_PROJECT
+  );
+}
+
+function defaultProjectId(): string | undefined {
+  return (
+    process.env.GOOGLE_CLOUD_PROJECT ||
+    process.env.GCLOUD_PROJECT ||
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
+  );
+}
+
+/**
  * Service account credentials are read, in order, from:
  *   1. FIREBASE_SERVICE_ACCOUNT_JSON  (raw JSON or base64, good for hosting)
  *   2. FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY
  *   3. ./firebase-service-account.json  (local development; gitignored)
+ *   4. Application Default Credentials (App Hosting / Cloud Run)
  */
 function loadServiceAccount(): ServiceAccount | null {
   const inline = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
@@ -57,7 +81,16 @@ function getAdminApp(): App {
   }
 
   const serviceAccount = loadServiceAccount();
+
   if (!serviceAccount?.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
+    if (hasApplicationDefaultCredentials()) {
+      cachedApp = initializeApp({
+        credential: applicationDefault(),
+        projectId: defaultProjectId(),
+      });
+      return cachedApp;
+    }
+
     throw new Error(
       'Firebase Admin credentials are missing. Save firebase-service-account.json in the project ' +
         'root, or set FIREBASE_SERVICE_ACCOUNT_JSON (see .env.example).'
@@ -78,9 +111,9 @@ function getAdminApp(): App {
 /** True when the server can verify tokens — lets routes degrade gracefully. */
 export function isFirebaseAdminConfigured(): boolean {
   try {
-    return Boolean(loadServiceAccount());
+    return Boolean(loadServiceAccount()) || hasApplicationDefaultCredentials();
   } catch {
-    return false;
+    return hasApplicationDefaultCredentials();
   }
 }
 

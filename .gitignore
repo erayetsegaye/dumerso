@@ -13,3 +13,4 @@ firestore-debug.log
 *serviceAccount*.json
 *service-account*
 *.bak
+out/
