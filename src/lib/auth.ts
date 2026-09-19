@@ -10,6 +10,36 @@ import {
 export const INVITE_COOKIE = 'signup_invite';
 export const LEGACY_COOKIE = 'admin_token';
 
+/**
+ * Paths a Supabase cookie may have been written to.
+ *
+ * A cookie can only be deleted on the exact path it was set with. An earlier
+ * build forwarded cookies without their options, so the browser scoped copies
+ * to the directory of the request (/auth from the OAuth callback, /admin from
+ * the middleware). Those duplicates are sent before the real '/' cookie and
+ * shadow it, which breaks every sign-in after the first. Expire all three.
+ */
+export const SUPABASE_COOKIE_PATHS = ['/', '/auth', '/admin'] as const;
+
+/**
+ * Expires one cookie on every path above, by appending raw Set-Cookie headers.
+ *
+ * `response.cookies.set()` cannot do this: it keys its map by cookie name, so
+ * the same name written three times keeps only the last path. Anything that
+ * re-serialises the header (`response.cookies`, `NextResponse.json`) collapses
+ * the duplicates again, so callers must append to a Headers object they own.
+ */
+export function expireCookieOnAllPaths(headers: Headers, name: string): void {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+
+  SUPABASE_COOKIE_PATHS.forEach((path) => {
+    headers.append(
+      'Set-Cookie',
+      `${name}=; Path=${path}; Max-Age=0; SameSite=Lax; HttpOnly${secure}`
+    );
+  });
+}
+
 export type Role = 'pending' | 'staff' | 'admin';
 
 export type SessionUser = {

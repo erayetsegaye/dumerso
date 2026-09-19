@@ -61,6 +61,7 @@ export default function AdminDailyOrdersPage() {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [todayLabel, setTodayLabel] = useState('');
 
   // New Order Form State
   const [orderCart, setOrderCart] = useState<OrderItemInput[]>([]);
@@ -120,6 +121,13 @@ export default function AdminDailyOrdersPage() {
     };
     return new Date().toLocaleDateString(undefined, options);
   };
+
+  // The formatted date depends on the viewer's locale and timezone, so it can
+  // only be produced after mount - rendering it directly would not match the
+  // prerendered server markup.
+  useEffect(() => {
+    setTodayLabel(getFormattedDateDisplay());
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -281,7 +289,7 @@ export default function AdminDailyOrdersPage() {
 
           <div className="inline-flex items-center gap-2 bg-[#1A0D07] px-4 py-2 rounded-xl border border-[#4A2917] text-xs font-bold text-[#F3E4CB]">
             <Calendar className="w-4 h-4 text-[#8B5A2B]" />
-            <span>{getFormattedDateDisplay()}</span>
+            <span>{todayLabel}</span>
           </div>
         </div>
       </div>

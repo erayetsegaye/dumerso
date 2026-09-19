@@ -1,37 +1,66 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import SafeImage from '@/components/SafeImage';
 import { describeAuthError, isSupabaseConfigured, signInWithGoogle } from '@/lib/supabase/client';
 
-function loginErrorFromQuery(): string {
-  if (typeof window === 'undefined') return '';
-  const code = new URLSearchParams(window.location.search).get('error');
-  switch (code) {
-    case 'invite':
-      return 'That invite code is not valid. Ask the cafe owner for the current code.';
-    case 'closed':
-      return 'Sign-ups are closed right now.';
-    case 'disabled':
-      return 'This account has been disabled by an administrator.';
-    case 'config':
-      return 'Supabase is not configured on the server yet.';
-    case 'auth':
-      return 'Google sign-in failed. Please try again.';
-    default:
-      return '';
-  }
+/**
+ * Messages for the `?error=` code that /auth/callback redirects back with.
+ * Read after mount only — reading the URL during render would make the client
+ * markup differ from the server markup and break hydration.
+ */
+const LOGIN_ERRORS: Record<string, string> = {
+  invite: 'That invite code is not valid. Ask the cafe owner for the current code.',
+  closed: 'Sign-ups are closed right now.',
+  disabled: 'This account has been disabled by an administrator.',
+  config: 'Supabase is not configured on the server yet.',
+  auth: 'Google sign-in failed. Please try again.',
+};
+
+/**
+ * Supabase reports provider failures in the URL *fragment*, which the browser
+ * never sends to the server - so /auth/callback only ever sees "no code" and
+ * falls back to the generic ?error=auth. Reading the fragment here recovers the
+ * real reason (for example "Unable to exchange external code", which means the
+ * Google client secret in Supabase does not match the client ID).
+ */
+function detailFromHash(hash: string): string {
+  const fragment = new URLSearchParams(hash.replace(/^#/, ''));
+  const description = fragment.get('error_description');
+  if (!description) return '';
+  const clean = description.trim().replace(/\s+/g, ' ');
+  return clean.length > 180 ? `${clean.slice(0, 180)}…` : clean;
 }
 
 export default function AdminLoginPage() {
-  const [error, setError] = useState(loginErrorFromQuery);
+  const [error, setError] = useState('');
+  const [errorDetail, setErrorDetail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const configured = useMemo(() => isSupabaseConfigured(), []);
 
+  // Browser-only: surface the callback error after the first render matches.
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('error');
+    const detail = detailFromHash(window.location.hash);
+
+    if (code && LOGIN_ERRORS[code]) {
+      setError(LOGIN_ERRORS[code]);
+    } else if (detail) {
+      setError(LOGIN_ERRORS.auth);
+    }
+
+    if (detail) {
+      setErrorDetail(detail);
+      // Drop the fragment so a refresh does not replay a stale failure.
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    }
+  }, []);
+
   const handleGoogleLogin = async () => {
     setError('');
+    setErrorDetail('');
     setIsLoading(true);
 
     try {
@@ -77,8 +106,11 @@ export default function AdminLoginPage() {
         )}
 
         {error && (
-          <div className="bg-rose-950/80 border border-rose-800 text-rose-200 text-xs p-3 rounded-xl font-semibold text-center">
-            {error}
+          <div className="bg-rose-950/80 border border-rose-800 text-rose-200 text-xs p-3 rounded-xl font-semibold text-center space-y-1">
+            <p>{error}</p>
+            {errorDetail && (
+              <p className="text-[10px] font-medium text-rose-300/80 break-words">{errorDetail}</p>
+            )}
           </div>
         )}
 

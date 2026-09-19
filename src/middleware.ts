@@ -11,6 +11,18 @@ import { updateSession } from '@/lib/supabase/middleware';
  */
 const PUBLIC_ADMIN_PATHS = ['/admin/login', '/admin/signup'];
 
+/**
+ * Moves refreshed Supabase cookies onto a redirect, keeping every attribute.
+ * Copying only name/value loses Path and the browser re-scopes the cookie to
+ * /admin, leaving a stale duplicate that shadows the real session.
+ */
+function withRefreshedCookies(redirect: NextResponse, source: NextResponse): NextResponse {
+  source.cookies.getAll().forEach((cookie) => {
+    redirect.cookies.set(cookie);
+  });
+  return redirect;
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const { userId, response } = await updateSession(request);
@@ -19,11 +31,7 @@ export async function middleware(request: NextRequest) {
 
   if (isPublicPath) {
     if (hasSession) {
-      const redirect = NextResponse.redirect(new URL('/admin', request.url));
-      response.cookies.getAll().forEach((cookie) => {
-        redirect.cookies.set(cookie.name, cookie.value);
-      });
-      return redirect;
+      return withRefreshedCookies(NextResponse.redirect(new URL('/admin', request.url)), response);
     }
     return response;
   }
@@ -31,11 +39,7 @@ export async function middleware(request: NextRequest) {
   if (!hasSession) {
     const loginUrl = new URL('/admin/login', request.url);
     loginUrl.searchParams.set('from', `${pathname}${search}`);
-    const redirect = NextResponse.redirect(loginUrl);
-    response.cookies.getAll().forEach((cookie) => {
-      redirect.cookies.set(cookie.name, cookie.value);
-    });
-    return redirect;
+    return withRefreshedCookies(NextResponse.redirect(loginUrl), response);
   }
 
   return response;

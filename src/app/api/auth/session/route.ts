@@ -4,7 +4,15 @@ import { INVITE_COOKIE, LEGACY_COOKIE, getSessionUser, signOutEverywhere } from 
 
 export const dynamic = 'force-dynamic';
 
-/** Sign out: clears the Supabase session cookies and the leftover password cookie. */
+/**
+ * Sign out: clears the Supabase session cookies and the leftover password cookie.
+ *
+ * Only the '/' copy can be cleared here. Next collapses duplicate Set-Cookie
+ * entries that share a name on non-redirect responses, so a cookie wrongly
+ * scoped to /auth or /admin by an older build cannot be expired from this
+ * route. /auth/callback does that cleanup instead - it returns a redirect,
+ * where the duplicate headers survive.
+ */
 export async function DELETE() {
   const user = await getSessionUser().catch(() => null);
   await signOutEverywhere(user?.uid);
