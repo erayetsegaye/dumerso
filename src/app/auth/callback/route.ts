@@ -8,6 +8,7 @@ import {
   isSupabaseConfigured,
 } from '@/lib/supabase/admin';
 import {
+  DELETE_COOKIE,
   INVITE_COOKIE,
   expireCookieOnAllPaths,
   getOrCreateUserProfile,
@@ -123,10 +124,7 @@ export async function GET(request: Request) {
   pendingCookies.push({
     name: INVITE_COOKIE,
     value: '',
-    options: {
-      path: '/',
-      maxAge: 0,
-    },
+    options: { ...DELETE_COOKIE, path: '/' },
   });
 
   const existing = await getAdminClient()

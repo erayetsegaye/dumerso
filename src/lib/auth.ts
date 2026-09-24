@@ -22,6 +22,23 @@ export const LEGACY_COOKIE = 'admin_token';
 export const SUPABASE_COOKIE_PATHS = ['/', '/auth', '/admin'] as const;
 
 /**
+ * Options that actually delete a cookie.
+ *
+ * `maxAge: 0` alone is not enough: Next's cookie serialiser treats 0 as falsy
+ * and omits the attribute, so the cookie is merely blanked and lives on. An
+ * empty HttpOnly cookie is worse than none - the Supabase browser client can
+ * no longer overwrite it, so it can never store a new PKCE code verifier and
+ * every later sign-in fails. `expires` in the past is what removes it.
+ */
+export const DELETE_COOKIE = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  maxAge: 0,
+  expires: new Date(0),
+} as const;
+
+/**
  * Expires one cookie on every path above, by appending raw Set-Cookie headers.
  *
  * `response.cookies.set()` cannot do this: it keys its map by cookie name, so
@@ -35,7 +52,7 @@ export function expireCookieOnAllPaths(headers: Headers, name: string): void {
   SUPABASE_COOKIE_PATHS.forEach((path) => {
     headers.append(
       'Set-Cookie',
-      `${name}=; Path=${path}; Max-Age=0; SameSite=Lax; HttpOnly${secure}`
+      `${name}=; Path=${path}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax; HttpOnly${secure}`
     );
   });
 }
